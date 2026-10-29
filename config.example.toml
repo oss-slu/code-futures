@@ -1,0 +1,115 @@
+# Code Futures configuration.
+#
+# Copy to ~/.config/code-futures/config.toml and fill in. Never commit the
+# real file: credentials live in ~/.config or the keychain, never beside
+# source. `config.toml` is gitignored here as a second line of defence.
+#
+#   mkdir -p ~/.config/code-futures
+#   cp config.example.toml ~/.config/code-futures/config.toml
+#   chmod 600 ~/.config/code-futures/config.toml
+#
+# Environment variables override every value below, so CI supplies the same
+# settings without a file. See docs/credentials.md for how to generate each
+# credential and, for the GitHub token, how to authorise it for SSO -- which
+# is the step whose omission makes a sweep report that every team failed
+# everything.
+
+[github]
+# Classic personal access token with `repo` and `read:org`.
+#
+# Classic rather than fine-grained, because Scorecard's branch-protection
+# check needs the classic `repo` scope.
+#
+# MUST be SSO-authorised for the SLU enterprise. Settings -> Developer
+# settings -> Tokens (classic) -> Configure SSO -> Authorize.
+#
+# Leave empty to fall back to `gh auth token`, which is the usual case on a
+# workstation where gh is already logged in.
+# Overridden by: GITHUB_TOKEN
+token = ""
+
+# The organisation to sweep.
+organization = "oss-slu"
+
+
+[sonar]
+# SonarQube Cloud organisation analysis token.
+#
+# sonarcloud.io -> avatar -> My Account -> Security -> Generate Tokens,
+# type "Organization Analysis Token".
+#
+# One organisation-wide token covers every current and future project, so no
+# team manages a secret. An analysis token grants submitting results rather
+# than reading anything, and the source is already public, so the realistic
+# damage from a leak is poisoned quality data rather than disclosure.
+#
+# Leave empty to skip the Code Quality Analysis section. Those three probes
+# then report `unreadable`, which is honest, and the rest of the report is
+# unaffected.
+# Overridden by: SONAR_TOKEN
+token = ""
+
+# Organisation key as SonarQube Cloud assigned it, shown in the URL.
+# Overridden by: SONAR_ORGANIZATION
+organization = "oss-slu"
+
+# How a repository name maps to a Sonar project key. `{owner}` and `{repo}`
+# are substituted. The default matches what automatic provisioning creates.
+project_key = "{owner}_{repo}"
+
+
+[scorecard]
+# Checks to run. The 0-10 composite is never read.
+#
+# It is calibrated for widely-depended-upon libraries and includes checks --
+# fuzzing, signed releases, packaging -- that score zero for essentially every
+# student and research project. The aggregate would put every team in the low
+# single digits, which is demoralising and untrue. A composite score encodes a
+# population, and these projects are not in it.
+#
+# Five checks are kept, chosen because each maps cleanly onto "is this
+# practice in place". Six named in the design plan are excluded:
+#
+#   Binary-Artifacts, Vulnerabilities  inverted -- they report defect presence
+#                                      rather than practice presence, and need
+#                                      a negated probe name to read correctly
+#   Code-Review                        scalar -- a proportion of recent commits
+#                                      rather than a state
+#   License, Branch-Protection,        superseded by richer local sources; the
+#   CI-Tests                           practice snapshot carries the full
+#                                      branch gate, including the "protected
+#                                      but requires zero reviews" case that
+#                                      Scorecard's score flattens
+#
+# `Maintained` is excluded for a different reason: it scores activity over the
+# last 90 days, which is meaningful mid-semester and collapses for every
+# repository over a winter break. A seasonal artefact in a team-facing
+# document is worse than a missing check.
+checks = [
+    "SAST",
+    "Security-Policy",
+    "Token-Permissions",
+    "Dangerous-Workflow",
+    "Dependency-Update-Tool",
+]
+
+# Seconds before a single repository's run is abandoned. A timeout yields
+# `unreadable`, never `absent`.
+timeout = 300
+
+
+[practice]
+# The orchestration tooling's practice snapshot, read rather than
+# reimplemented. Its collector is tested, current, and already handles the
+# unreadable case correctly.
+#
+# Leave empty to collect the baseline directly, which is slower and duplicates
+# logic that already exists elsewhere.
+snapshot = ""
+
+
+[output]
+# Where snapshots and rendered reports are written. Term-scoped so a rollover
+# is a new directory rather than a symlink somebody has to re-point.
+directory = "evidence/{term}"
+term = "fall-2026"

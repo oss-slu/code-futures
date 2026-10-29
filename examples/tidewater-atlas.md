@@ -1,0 +1,193 @@
+# **Code Futures Report: `oss-slu/tidewater-atlas`**
+
+> ### **Fabricated example**
+>
+> `oss-slu/tidewater-atlas` is not a real repository. No project by that name exists in `oss-slu` or anywhere else, and nothing here describes any actual team's codebase. It is composite: it carries a mix of findings chosen so that every kind of outcome appears somewhere, which no single real project would be likely to show at once.
+>
+> Your report will have this shape. Only the findings differ.
+
+|                    |                                                        |
+| ------------------ | ------------------------------------------------------ |
+| **Repository**     | `oss-slu/tidewater-atlas`                              |
+| **Commit**         | `a0408fc`                                              |
+| **Collected**      | 2026-11-01 14:00 UTC                                   |
+| **Schema**         | `code-futures/v1`                                      |
+| **Languages**      | Python, JavaScript                                     |
+| **Classification** | Internal — shareable within the program, not published |
+
+---
+
+## **How to read this**
+
+This report describes which engineering practices are in place in one repository. It records practice. Judging the code is a separate job, done by people, and nothing here feeds an evaluation.
+
+Each finding carries one of four outcomes:
+
+* **enforced** — in place, and CI runs it
+* **present** — in the repository, but nothing runs it automatically
+* **absent** — we looked, and it is not there
+* **unreadable** — we could not find out. This describes our tooling, not your repository
+
+The companion guidebook explains each probe and the limits of what it shows. Read §3 before acting on anything below.
+
+---
+
+## **Outcomes**
+
+| Outcome    | Count |
+| ---------- | ----- |
+| enforced   | 8     |
+| present    | 8     |
+| absent     | 8     |
+| unreadable | 1     |
+
+### **No score**
+
+Use these counts as an index to find your place. Each probe reports on one practice, and the practices a project needs depend on what it is for. Two repositories with different totals may simply be doing different work.
+
+25 findings from 23 probes, because `lint` and `format` are answered once per language.
+
+---
+
+## **1. Open Source Baseline**
+
+Whether the repository carries what an outside contributor needs. Someone who has never met you should be able to understand the project and open a pull request without asking a person first.
+
+* **`practice.readme`** — **present**. `README.md`
+* **`practice.contributing`** — **present**. `CONTRIBUTING.md`
+* **`practice.code_of_conduct`** — **absent**. Searched the root, `docs/`, and `.github/`.
+* **`practice.license`** — **present**. `LICENSE` exists. Its text matches no OSI-approved licence we recognise, so no SPDX identifier was assigned.
+* **`practice.issue_template`** — **present**. `.github/ISSUE_TEMPLATE/bug_report.md`
+* **`practice.pull_request_template`** — **absent**. No pull request template found.
+* **`practice.security_policy`** — **absent**. No `SECURITY.md`.
+
+### **Unidentifiable licence**
+
+An unrecognisable licence file is a different finding from a missing one. Someone decided this project should be licensed. What is missing is the part that makes the decision legible to a machine, a contributor, or a lawyer. A retyped or truncated licence is the usual cause. Replacing it with verbatim text from [choosealicense.com](https://choosealicense.com) takes ten minutes.
+
+---
+
+## **2. Linting and Formatting**
+
+Whether a tool checks style and common errors, and whether anything makes that check run.
+
+| Probe    | Language   | Outcome      | Evidence                                                       |
+| -------- | ---------- | ------------ | -------------------------------------------------------------- |
+| `lint`   | JavaScript | **present**  | `eslint` in `frontend/.eslintrc.json`. No CI step runs it.     |
+| `lint`   | Python     | **enforced** | `ruff` in `pyproject.toml`, run at `.github/workflows/ci.yml`. |
+| `format` | JavaScript | **absent**   | No formatter configured.                                       |
+| `format` | Python     | **enforced** | `ruff format` checked at `.github/workflows/ci.yml`.           |
+
+### **two languages, two answers**
+
+This repository is JavaScript and Python, so each language gets its own row. They disagree. Closing the gap costs a few lines of YAML, which makes it the cheapest real improvement available here. The guidebook calls the pattern **"Configured But Never Run"**, and §5 works through it.
+
+---
+
+## **3. Testing**
+
+Which kinds of testing this project runs.
+
+| Probe              | Outcome      | Evidence                                                         |
+| ------------------ | ------------ | ---------------------------------------------------------------- |
+| `test.unit`        | **enforced** | `pytest` in `pyproject.toml`, run at `.github/workflows/ci.yml`. |
+| `test.integration` | **absent**   | No separate job, no marked suite.                                |
+| `test.e2e`         | **absent**   | No Playwright, Cypress, or Selenium.                             |
+| `test.coverage`    | **present**  | `pytest-cov` declared. No CI step runs it.                       |
+| `test.mutation`    | **absent**   | No mutation testing tool.                                        |
+
+### **Kinds, not percentages**
+
+Coverage counts lines executed. Tests that assert nothing still count toward it. Naming which kinds run shows you which kind you lack, and that is something you can act on.
+
+### **Absence is often correct**
+
+Three of five kinds are absent here, which may well be right for a project at this stage. End-to-end tests on a service with no user-facing flows would be scaffolding for something due to be rewritten. This section reports which kinds run, not which kinds should.
+
+---
+
+## **4. Review and Integration**
+
+Whether code is reviewed before merging, and whether anything runs against it.
+
+* **`review.required`** — **present**. `main` is protected. Required approving reviews: 0. Status checks: not required. Administrators: exempt.
+* **`ci.present`** — **enforced**. 3 workflows: `CI`, `CodeQL`, `Dependabot Updates`.
+
+### **Protection that permits unreviewed merges**
+
+Branch protection here requires zero approving reviews. The settings page shows a protected branch, and any pull request can still merge unread. §7 of the guidebook covers what making it binding costs, and there are real costs.
+
+### **Administrators are exempt**
+
+Whoever holds admin on this repository bypasses the rules above. On a small team that is most of the team, so the rules describe an intention. Sometimes that is the right call, because someone has to be able to fix a broken `main` at short notice. Worth choosing rather than inheriting.
+
+---
+
+## **5. Security and Dependencies**
+
+Whether the project guards against known classes of problem, and keeps its dependencies current.
+
+* **`security.sast`** — **unreadable**. The Scorecard SAST check exceeded its timeout. We established nothing here.
+* **`security.token_permissions`** — **absent**. Workflows declare no top-level `permissions:` block, so jobs run with the repository default.
+* **`security.workflow_safety`** — **enforced**. No dangerous workflow patterns detected.
+* **`deps.update_tool`** — **enforced**. Dependabot at `.github/dependabot.yml`.
+
+### **An unreadable probe describes us**
+
+`security.sast` failed on our side, and we report it that way. Marking it **absent** would tell you something was missing that may well be there.
+
+If an outcome in your report reads **unreadable** and you believe it is wrong, tell us. That is a bug in our tooling rather than a dispute about your codebase.
+
+---
+
+## **6. Code Quality Analysis**
+
+What continuous static analysis reports. This section carries no grade: it records whether the analysis runs and whether anyone has acted on what it flags.
+
+* **`quality.project`** — **enforced**. Analysed as `oss-slu_tidewater-atlas`. Last analysis 2026-10-30.
+* **`quality.gate`** — **enforced**. Quality gate `default`, applied in CI. Current status: Passed.
+* **`quality.hotspots_reviewed`** — **present**. 7 security hotspots flagged, 2 reviewed. The rest are waiting on a person.
+
+### **A hotspot is a question, not a defect**
+
+A security hotspot is security-sensitive code that a person needs to look at. Sonar is not claiming a vulnerability here. It has found the place where the question lives and handed the question to you, which is what a good tool does when it cannot be certain.
+
+Reviewing one means deciding whether the context makes it safe, then recording that decision. Most reviews end in "this is fine", and that is a result rather than a waste: the next person can see it was considered.
+
+### **This analysis is public**
+
+SonarQube Cloud publishes analysis of public repositories on sonarcloud.io, where anyone can see it without an account. The code is already public, so this adds no disclosure. We are telling you because finding out afterwards is a different experience from being told.
+
+---
+
+## **What we could not read**
+
+| Probe           | Reason                                        |
+| --------------- | --------------------------------------------- |
+| `security.sast` | The Scorecard SAST check exceeded its timeout |
+
+1 of 23 probes. A long list here, or a complete one, would mean the sweep failed rather than the repository being empty.
+
+---
+
+## **Where to start**
+
+Pick one item. A team that picks six finishes none, because each competes with feature work that has a client attached. A team that picks one finishes it and picks another. §5 of the guidebook makes the argument properly.
+
+Our suggestion here is **the licence**:
+
+* Ten minutes, no design decisions, no coordination
+* The only finding with consequences outside the team — a contributor cannot tell whether they may use this
+* Entirely within the team's control, which is not true of everything below
+
+Then, in order:
+
+1. **Run `eslint` in CI.** The configuration exists; this adds a step that invokes it. Expect many findings on first run — the guidebook covers landing a linter without a hundred-file diff.
+2. **Review the open security hotspots.** Decide whether the context makes each one safe and record the decision. Most will be fine; the record is what makes that visible next time.
+3. **Wire `pytest-cov` into CI.** The dependency is already declared. Read the resulting number as a map of what is untested rather than as a target.
+
+Every item here is a future rather than a feature. None will be visible to a user, which is why they are easy to postpone, and why naming them is worth doing.
+
+---
+
+*Generated by [Code Futures](https://github.com/oss-slu/code-futures), schema `code-futures/v1`. Companion guidebook: [`guidebook_code_futures`](https://github.com/oss-slu/guidebook_code_futures). This report describes a repository rather than the people working in it, and feeds no evaluation.*

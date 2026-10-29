@@ -1,0 +1,35 @@
+[project]
+name = "code-futures"
+version = "1.0.0"
+description = "Given a repository, say what state its engineering practice is in."
+requires-python = ">=3.11"
+license = { text = "MIT" }
+# One dependency. PyYAML reads the orchestration tooling's practice snapshot;
+# everything else is standard library. GitHub access goes through the `gh`
+# CLI, which already handles auth, pagination and SAML SSO, so no HTTP client
+# is needed. `tomllib` is stdlib from 3.11.
+dependencies = ["PyYAML>=6.0"]
+
+[project.scripts]
+code-futures = "code_futures.cli:main"
+
+[project.optional-dependencies]
+dev = ["pytest>=8.0", "ruff>=0.6"]
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+include = ["code_futures*"]
+
+[tool.ruff]
+line-length = 110
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM"]
+ignore = ["E501"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
