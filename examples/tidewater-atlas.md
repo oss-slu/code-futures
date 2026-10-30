@@ -37,7 +37,7 @@ The companion guidebook explains each probe and the limits of what it shows. Rea
 | Outcome    | Count |
 | ---------- | ----- |
 | enforced   | 9     |
-| present    | 15    |
+| present    | 18    |
 | absent     | 8     |
 | unreadable | 1     |
 
@@ -49,7 +49,7 @@ Two numbers are deliberately absent. We do not publish the OpenSSF Scorecard's 0
 
 Use the outcome counts as an index to find your place. Each probe reports on one practice, and the practices a project needs depend on what it is for.
 
-33 findings from 31 probes, because `lint` and `format` are answered once per language.
+36 findings from 34 probes, because `lint` and `format` are answered once per language.
 
 ---
 
@@ -72,6 +72,17 @@ What the shape of this codebase looks like, measured from its own history. This 
     * `web/src/Dashboard.jsx`
 * **`structure.duplication`** — **present**. 7.4% of lines are duplicated, across 18 blocks.
 * **`structure.complexity`** — **present**. 1840 points of cognitive complexity across 63 files. Highest: `api/services/sync.py` at 412.
+* **`structure.cohesion`** — **present**. 2 of 3 strongly-coupled pairs cross a module boundary (67%).
+    * api/services/sync.py <-> web/src/Dashboard.jsx (71%)
+    * api/models/survey.py <-> web/src/SurveyForm.jsx (64%)
+* **`structure.blast_radius`** — **present**. A typical change touches 2 files. The largest tenth touch 19 or more; the largest touched 41.
+    * `api/models/survey.py (in 14 large commits)`
+    * `api/services/sync.py (in 11 large commits)`
+    * `web/src/Dashboard.jsx (in 9 large commits)`
+* **`structure.tidy_first`** — **present**. `api/services/sync.py` would pay back soonest: changed 67 times, complexity 412, no test file, 1 coupling across a module boundary.
+    * `api/services/sync.py — changed 67 times, complexity 412, no test file, 1 coupling across a module boundary`
+    * `api/models/survey.py — changed 52 times, complexity 180, 1 coupling across a module boundary`
+    * `web/src/Dashboard.jsx — changed 44 times, complexity 210, no test file`
 
 ### **Reading a hotspot**
 
@@ -88,6 +99,47 @@ Two files that keep changing together are coupled, whether or not either imports
 A static analyser cannot see this. A test file changing with the module it tests is coupling working as intended. A route handler that changes every time a database model changes is a boundary in the wrong place, and it will keep costing you until it moves.
 
 The question to ask of each pair is whether the relationship is one you would choose. Where the answer is no, that is where a refactor pays for itself.
+
+### **Coupling that crosses a boundary**
+
+Cohesion is coupling put in the right place. Things that change together should be *together*, so the same measurement reads two ways depending on where the pair sits.
+
+A pair inside one module is cohesion working, and needs nothing from you. A pair spanning two modules is a boundary that is not holding, and it is the one worth your attention: every change has to cross it, and crossing costs a context switch, a second review, and a chance to miss one side.
+
+Three questions, in order. Does the dependency run the direction you intended? Should one of these files move? Or is there a third thing — a shared concept neither module owns yet — that both are reaching for?
+
+### **What a change costs you**
+
+Kent Beck's argument about cost runs in a chain: the cost of software is the cost of changing it, the cost of changing it is dominated by the *expensive* changes rather than the average one, and coupling is what makes a change expensive.
+
+So the gap between your median change and your largest tenth is the measurement that matters, not the median on its own. A codebase where most changes touch two files and the worst touch twenty has somewhere that twenty-file changes come from, and the files listed above are where to look.
+
+This number falls when coupling falls. It is the clearest way to see whether structural work paid off.
+
+### **Tidy first?**
+
+The question mark is the point, and it is Beck's. Tidying pays off when it makes a change you are about to make easier. Tidying you will not cash in soon is cost without return, and a report listing every structural weakness invites exactly the reading he argues against.
+
+So this is not the worst file in the repository. It is the file where tidying would pay back soonest: you are already in it regularly, it is expensive to work in, and the reasons above say why.
+
+The test for whether you got this right is simple. If the next change to that area is easier than the last one was, it paid. If you tidied something you then did not touch for a month, it did not, and that is worth noticing rather than repeating.
+
+### **What to look at by hand**
+
+Everything above is what a machine can establish from your history and your files. Several of the most valuable structural questions are not on that list, and they are not on it because no tool answers them, rather than because they do not matter.
+
+Worth an hour with the codebase and a colleague:
+
+* **Is the domain model right?** The most expensive mistakes in software are conceptual — the wrong abstraction, a boundary that does not match the problem. Nothing above can see it.
+* **Does the dependency direction match the design?** Coupling shows which files change together, not which *should* depend on which.
+* **Is there duplicated *concept* rather than duplicated text?** Two implementations of one idea, written differently, are invisible to a duplication detector and are the more expensive kind.
+* **Do the tests assert anything?** A test that runs code and checks nothing passes and counts toward coverage.
+* **Is a hotspot complex for a good reason?** A parser or a scheduler may be the hardest file you have, correctly.
+* **Is dead code still in the tree?** Detectable per language, and we do not yet run those tools.
+
+The *Codebase Technical Assessment Guidebook and Rubric* is the instrument for this pass, across seventeen dimensions. Section 8 says how the two fit together.
+
+**A caveat that applies to everything above.** Coupling is contextual. Two files coupled with respect to one kind of change may be independent with respect to another, and the figures here aggregate across every change in your history. They cannot tell you which kind of change is costing you. You can.
 
 ---
 
@@ -219,7 +271,7 @@ SonarQube Cloud publishes analysis of public repositories on sonarcloud.io, wher
 | --------------- | --------------------------------------------- |
 | `security.sast` | The Scorecard SAST check exceeded its timeout |
 
-1 of 31 probes. A long list here, or a complete one, would mean the sweep failed rather than the repository being empty.
+1 of 34 probes. A long list here, or a complete one, would mean the sweep failed rather than the repository being empty.
 
 ---
 

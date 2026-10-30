@@ -131,6 +131,12 @@ DETAIL: dict[tuple[str, Outcome], str] = {
     ("structure.duplication", Outcome.ABSENT): "Duplication is below the reporting threshold.",
     ("structure.complexity", Outcome.PRESENT): "{total} points of cognitive complexity across {files} files. Highest: `{top}` at {top_value}.",
     ("structure.complexity", Outcome.ABSENT): "No file exceeds the complexity reporting threshold.",
+    ("structure.cohesion", Outcome.PRESENT): "{across} of {total} strongly-coupled pairs cross a module boundary ({ratio}%).",
+    ("structure.cohesion", Outcome.ABSENT): "All strong coupling stays inside a module.",
+    ("structure.blast_radius", Outcome.PRESENT): "A typical change touches {median} files. The largest tenth touch {p90} or more; the largest touched {largest}.",
+    ("structure.blast_radius", Outcome.ABSENT): "Not enough history to describe a change-size distribution.",
+    ("structure.tidy_first", Outcome.PRESENT): "`{top}` would pay back soonest: {reasons}.",
+    ("structure.tidy_first", Outcome.ABSENT): "No file combines high churn with high cost to work in.",
     # --- Baseline: presence detection, so the evidence is a path ---------
     ("practice.readme", Outcome.PRESENT): "`{path}`",
     ("practice.readme", Outcome.ABSENT): "No README found.",
@@ -261,6 +267,47 @@ NOTE_THIN_HISTORY = """### **This repository is young**
 {commits} commits is not enough history for hotspot ranking to mean much — it mostly reports that recently-written files were recently written. Read that part sceptically.
 
 Change coupling holds up better on a short history. Which files keep changing together is visible after one semester, and it is the more useful finding here."""
+
+NOTE_COHESION = """### **Coupling that crosses a boundary**
+
+Cohesion is coupling put in the right place. Things that change together should be *together*, so the same measurement reads two ways depending on where the pair sits.
+
+A pair inside one module is cohesion working, and needs nothing from you. A pair spanning two modules is a boundary that is not holding, and it is the one worth your attention: every change has to cross it, and crossing costs a context switch, a second review, and a chance to miss one side.
+
+Three questions, in order. Does the dependency run the direction you intended? Should one of these files move? Or is there a third thing — a shared concept neither module owns yet — that both are reaching for?"""
+
+NOTE_BLAST_RADIUS = """### **What a change costs you**
+
+Kent Beck's argument about cost runs in a chain: the cost of software is the cost of changing it, the cost of changing it is dominated by the *expensive* changes rather than the average one, and coupling is what makes a change expensive.
+
+So the gap between your median change and your largest tenth is the measurement that matters, not the median on its own. A codebase where most changes touch two files and the worst touch twenty has somewhere that twenty-file changes come from, and the files listed above are where to look.
+
+This number falls when coupling falls. It is the clearest way to see whether structural work paid off."""
+
+NOTE_TIDY_FIRST = """### **Tidy first?**
+
+The question mark is the point, and it is Beck's. Tidying pays off when it makes a change you are about to make easier. Tidying you will not cash in soon is cost without return, and a report listing every structural weakness invites exactly the reading he argues against.
+
+So this is not the worst file in the repository. It is the file where tidying would pay back soonest: you are already in it regularly, it is expensive to work in, and the reasons above say why.
+
+The test for whether you got this right is simple. If the next change to that area is easier than the last one was, it paid. If you tidied something you then did not touch for a month, it did not, and that is worth noticing rather than repeating."""
+
+NOTE_MANUAL_ANALYSIS = """### **What to look at by hand**
+
+Everything above is what a machine can establish from your history and your files. Several of the most valuable structural questions are not on that list, and they are not on it because no tool answers them, rather than because they do not matter.
+
+Worth an hour with the codebase and a colleague:
+
+* **Is the domain model right?** The most expensive mistakes in software are conceptual — the wrong abstraction, a boundary that does not match the problem. Nothing above can see it.
+* **Does the dependency direction match the design?** Coupling shows which files change together, not which *should* depend on which.
+* **Is there duplicated *concept* rather than duplicated text?** Two implementations of one idea, written differently, are invisible to a duplication detector and are the more expensive kind.
+* **Do the tests assert anything?** A test that runs code and checks nothing passes and counts toward coverage.
+* **Is a hotspot complex for a good reason?** A parser or a scheduler may be the hardest file you have, correctly.
+* **Is dead code still in the tree?** Detectable per language, and we do not yet run those tools.
+
+The *Codebase Technical Assessment Guidebook and Rubric* is the instrument for this pass, across seventeen dimensions. Section 8 says how the two fit together.
+
+**A caveat that applies to everything above.** Coupling is contextual. Two files coupled with respect to one kind of change may be independent with respect to another, and the figures here aggregate across every change in your history. They cannot tell you which kind of change is costing you. You can."""
 
 NOTE_UNIDENTIFIABLE_LICENCE = """### **Unidentifiable licence**
 
@@ -472,6 +519,23 @@ REMEDIATION: dict[str, dict] = {
             "Usually a version bump rather than a change you have to design",
         ],
         "step": "**Update the dependencies carrying advisories.** Most resolve with a version bump; the advisory text says which version fixes it.",
+    },
+    "structure.tidy_first": {
+        "rank": 22,
+        "when": ("present",),
+        "label": "tidying the file you are in most often",
+        "why": [
+            "You are already in it regularly, so the payback is soon rather than someday",
+            "It is expensive to work in now, and every visit pays that cost again",
+        ],
+        "step": "**Tidy `{top}` before your next change to it.** Separate the tidying commit from the behaviour commit — reviewing them together costs more than either alone.",
+    },
+    "structure.cohesion": {
+        "rank": 32,
+        "when": ("present",),
+        "label": "a boundary that is not holding",
+        "why": ["Coupling crossing a module boundary means every change has to cross it too"],
+        "step": "**Look at the pairs crossing a module boundary.** Decide whether one file should move, or whether both are reaching for a concept neither module owns yet.",
     },
     "structure.untested_modules": {
         "rank": 28,

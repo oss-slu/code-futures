@@ -130,6 +130,7 @@ class StructureReport:
     coupled: list[CoupledPair] = field(default_factory=list)
     hotspots: list[Hotspot] = field(default_factory=list)
     churn: Counter = field(default_factory=Counter)
+    blast: "BlastRadius | None" = None
     unreadable: str | None = None
     """Set when history could not be read. Never a finding about the code."""
 
@@ -274,6 +275,7 @@ def analyse(repository: str, fetch_file) -> StructureReport:
         files=len(churn),
         coupled=change_coupling(commits)[:8],
         churn=churn,
+        blast=blast_radius(commits),
     )
 
     # Complexity is only fetched for files that already churn, because a
@@ -287,3 +289,152 @@ def analyse(repository: str, fetch_file) -> StructureReport:
     report.hotspots.sort(key=lambda h: -h.score)
     report.hotspots = report.hotspots[:6]
     return report
+
+
+# --- Cohesion, blast radius, and the tidy-first intersection ---------------
+#
+# Three further readings of the same history, each following an argument from
+# Kent Beck's *Tidy First?* rather than from a metrics catalogue.
+
+
+def module_of(path: str) -> str:
+    """The directory a file lives in, used as its module.
+
+    The immediate parent rather than the top-level directory, because the
+    boundary worth testing is usually the inner one. `api/models/survey.py`
+    and `api/routes/upload.py` share a top-level directory and sit on
+    opposite sides of a layer boundary, which is the case this is for.
+    """
+    return path.rsplit("/", 1)[0] if "/" in path else ""
+
+
+@dataclass
+class Cohesion:
+    """How much of a repository's coupling crosses a module boundary.
+
+    Beck's framing is that cohesion is coupling put in the right place:
+    things that change together should be together. So the same co-change
+    data answers two questions depending on where the pair sits. A pair
+    inside one module is cohesion working. A pair spanning two modules is a
+    boundary that is not holding, and it is the more actionable of the two
+    because it names where a refactor would pay.
+    """
+
+    within: list[CoupledPair] = field(default_factory=list)
+    across: list[CoupledPair] = field(default_factory=list)
+
+    @property
+    def total(self) -> int:
+        return len(self.within) + len(self.across)
+
+    @property
+    def leak_ratio(self) -> float:
+        """Share of strong coupling that crosses a boundary."""
+        return len(self.across) / self.total if self.total else 0.0
+
+
+def cohesion(pairs: list[CoupledPair]) -> Cohesion:
+    out = Cohesion()
+    for p in pairs:
+        (out.within if module_of(p.a) == module_of(p.b) else out.across).append(p)
+    return out
+
+
+@dataclass
+class BlastRadius:
+    """The distribution of how many files a change touches.
+
+    Beck's cost argument runs cost(software) ~ cost(change) ~ cost(big
+    change): the total is dominated by the expensive changes rather than the
+    average one, and coupling is what makes a change expensive. So the shape
+    of this distribution, and especially its tail, is the economic
+    measurement that argument points at. A median of two with a ninetieth
+    percentile of twenty says the costly changes are costly for a reason, and
+    `worst_files` names it.
+    """
+
+    median: int = 0
+    p90: int = 0
+    largest: int = 0
+    worst_files: list[tuple[str, int]] = field(default_factory=list)
+    """Files appearing most often in the largest decile of commits."""
+
+
+def blast_radius(commits: list[Commit]) -> BlastRadius:
+    sizes = sorted(len(c.files) for c in commits if c.files)
+    if not sizes:
+        return BlastRadius()
+    median = sizes[len(sizes) // 2]
+    p90 = sizes[int(len(sizes) * 0.9)] if len(sizes) > 9 else sizes[-1]
+
+    big = [c for c in commits if len(c.files) >= max(p90, 2)]
+    appears: Counter = Counter()
+    for c in big:
+        appears.update(set(c.files))
+    return BlastRadius(
+        median=median, p90=p90, largest=sizes[-1],
+        worst_files=appears.most_common(5),
+    )
+
+
+@dataclass
+class TidyCandidate:
+    """A file where tidying would pay off soon.
+
+    The question mark in *Tidy First?* is the whole argument: tidying pays
+    when it makes an imminent change easier, and tidying you will not cash in
+    soon is cost without return. A report that lists every structural
+    weakness invites exactly the reading Beck argues against.
+
+    This answers the question with evidence rather than taste. A file is a
+    candidate when you are already in it often, it is hard to work in, and
+    nothing protects you while you change it. Reasons are carried so the
+    report can say why rather than just rank.
+    """
+
+    path: str
+    changes: int
+    complexity: int
+    untested: bool
+    crossing: int
+    """Strong couplings this file has across a module boundary."""
+
+    @property
+    def reasons(self) -> list[str]:
+        out = [f"changed {self.changes} times"]
+        if self.complexity:
+            out.append(f"complexity {self.complexity}")
+        if self.untested:
+            out.append("no test file")
+        if self.crossing:
+            plural = "" if self.crossing == 1 else "s"
+            out.append(f"{self.crossing} coupling{plural} across a module boundary")
+        return out
+
+    @property
+    def score(self) -> float:
+        # Churn is the term that makes this "soon" rather than "someday", so
+        # it multiplies rather than adds. The rest raise the cost of each
+        # visit.
+        weight = 1.0 + (0.5 if self.untested else 0.0) + 0.25 * self.crossing
+        return self.changes * max(self.complexity, 1) * weight
+
+
+def tidy_first(
+    hotspots: list[Hotspot], coh: Cohesion, untested: set[str]
+) -> list[TidyCandidate]:
+    """Rank files by how soon tidying them would pay off."""
+    crossing: Counter = Counter()
+    for p in coh.across:
+        crossing[p.a] += 1
+        crossing[p.b] += 1
+
+    out = [
+        TidyCandidate(
+            path=h.path, changes=h.changes, complexity=h.complexity,
+            untested=h.path in untested, crossing=crossing.get(h.path, 0),
+        )
+        for h in hotspots
+    ]
+    out.sort(key=lambda c: -c.score)
+    return out

@@ -121,6 +121,19 @@ def _notes(report: RepositoryReport, section: Section) -> list[str]:
         cp = got.get(("structure.change_coupling", None))
         if cp and cp.outcome is Outcome.PRESENT:
             out.append(S.NOTE_COUPLING)
+        coh = got.get(("structure.cohesion", None))
+        if coh and coh.outcome is Outcome.PRESENT and int(coh.attributes.get("across", "0") or 0):
+            out.append(S.NOTE_COHESION)
+        br = got.get(("structure.blast_radius", None))
+        if br and br.outcome is Outcome.PRESENT:
+            out.append(S.NOTE_BLAST_RADIUS)
+        tf = got.get(("structure.tidy_first", None))
+        if tf and tf.outcome is Outcome.PRESENT:
+            out.append(S.NOTE_TIDY_FIRST)
+        # Always last in this section, and always present. The limits of
+        # automated structural analysis are part of the finding, not a
+        # footnote to it.
+        out.append(S.NOTE_MANUAL_ANALYSIS)
 
     if section is Section.REVIEW:
         req = got.get(("review.required", None))

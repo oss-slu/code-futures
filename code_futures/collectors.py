@@ -449,7 +449,8 @@ def _sonar_get(url: str, cfg: Config) -> dict | None:
 
 _STRUCTURE_PROBES = (
     "structure.hotspots", "structure.change_coupling", "structure.untested_modules",
-    "structure.duplication", "structure.complexity",
+    "structure.duplication", "structure.complexity", "structure.cohesion",
+    "structure.blast_radius", "structure.tidy_first",
 )
 
 # A source file is considered covered when a file with a matching stem exists
@@ -537,6 +538,51 @@ def structural(repository: str, paths: list[str] | None) -> list[ProbeResult]:
             ))
         else:
             out.append(ProbeResult(id="structure.untested_modules", outcome=Outcome.ABSENT, source="structure"))
+
+    # Cohesion: the same coupling data read against module boundaries.
+    coh = structure.cohesion(report.coupled)
+    if coh.total:
+        out.append(ProbeResult(
+            id="structure.cohesion",
+            outcome=Outcome.PRESENT if coh.across else Outcome.ABSENT,
+            attributes={
+                "across": str(len(coh.across)), "total": str(coh.total),
+                "ratio": str(round(coh.leak_ratio * 100)),
+            },
+            evidence=[f"{p.a} <-> {p.b} ({round(p.degree * 100)}%)" for p in coh.across[:6]],
+            source="structure",
+        ))
+    else:
+        out.append(ProbeResult(id="structure.cohesion", outcome=Outcome.ABSENT, source="structure"))
+
+    # Blast radius: the distribution Beck's cost argument points at.
+    br = report.blast
+    if br and br.median:
+        out.append(ProbeResult(
+            id="structure.blast_radius", outcome=Outcome.PRESENT,
+            attributes={"median": str(br.median), "p90": str(br.p90), "largest": str(br.largest)},
+            evidence=[f"{path} (in {n} large commits)" for path, n in br.worst_files],
+            source="structure",
+        ))
+    else:
+        out.append(ProbeResult(id="structure.blast_radius", outcome=Outcome.ABSENT, source="structure"))
+
+    # Tidy first: where tidying pays back soonest, rather than the worst file.
+    untested_set = set()
+    for r in out:
+        if r.id == "structure.untested_modules" and r.outcome is Outcome.PRESENT:
+            untested_set = set(r.evidence)
+    candidates = structure.tidy_first(report.hotspots, coh, untested_set)
+    if candidates:
+        top = candidates[0]
+        out.append(ProbeResult(
+            id="structure.tidy_first", outcome=Outcome.PRESENT,
+            attributes={"top": top.path, "reasons": ", ".join(top.reasons)},
+            evidence=[f"{c.path} — {', '.join(c.reasons)}" for c in candidates[:4]],
+            source="structure",
+        ))
+    else:
+        out.append(ProbeResult(id="structure.tidy_first", outcome=Outcome.ABSENT, source="structure"))
 
     # Duplication and cognitive complexity come from SonarQube Cloud, which
     # measures both properly. Reported as unreadable rather than absent when

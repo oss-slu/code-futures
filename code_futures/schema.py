@@ -147,6 +147,23 @@ PROBES: tuple[Probe, ...] = (
           "How much logic is duplicated?", top_rung=Outcome.PRESENT),
     Probe("structure.complexity", Section.STRUCTURE,
           "Which files carry the most cognitive complexity?", top_rung=Outcome.PRESENT),
+    # Cohesion is the same co-change data read against module boundaries.
+    # Beck's framing: cohesion is coupling put in the right place, so a pair
+    # inside one module is cohesion working and a pair spanning two is a
+    # boundary that is not holding.
+    Probe("structure.cohesion", Section.STRUCTURE,
+          "How much coupling crosses a module boundary?", top_rung=Outcome.PRESENT),
+    # The economic measurement Beck's cost argument points at:
+    # cost(software) ~ cost(change) ~ cost(big change), and coupling is what
+    # makes a change big. The tail of this distribution is the cost.
+    Probe("structure.blast_radius", Section.STRUCTURE,
+          "How many files does a typical change touch, and the worst ones?",
+          top_rung=Outcome.PRESENT),
+    # The question mark in *Tidy First?*. Tidying pays when it makes an
+    # imminent change easier; tidying you will not cash in soon is cost
+    # without return. This answers it with evidence rather than taste.
+    Probe("structure.tidy_first", Section.STRUCTURE,
+          "Where would tidying pay off soonest?", top_rung=Outcome.PRESENT),
     # --- Open Source Baseline -------------------------------------------
     # Sourced from the orchestration tooling's practice snapshot rather than
     # recollected. Its collector is tested, current, and already handles the

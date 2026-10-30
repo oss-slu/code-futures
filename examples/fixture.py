@@ -49,6 +49,25 @@ def build() -> RepositoryReport:
           attributes={"total": "1840", "files": "63", "top": "api/services/sync.py",
                       "top_value": "412"},
           source="sonar"),
+        # Cohesion: two of three coupled pairs cross a module boundary.
+        P("structure.cohesion", O.PRESENT,
+          attributes={"across": "2", "total": "3", "ratio": "67"},
+          evidence=["api/services/sync.py <-> web/src/Dashboard.jsx (71%)",
+                    "api/models/survey.py <-> web/src/SurveyForm.jsx (64%)"],
+          source="structure"),
+        P("structure.blast_radius", O.PRESENT,
+          attributes={"median": "2", "p90": "19", "largest": "41"},
+          evidence=["api/models/survey.py (in 14 large commits)",
+                    "api/services/sync.py (in 11 large commits)",
+                    "web/src/Dashboard.jsx (in 9 large commits)"],
+          source="structure"),
+        P("structure.tidy_first", O.PRESENT,
+          attributes={"top": "api/services/sync.py",
+                      "reasons": "changed 67 times, complexity 412, no test file, 1 coupling across a module boundary"},
+          evidence=["api/services/sync.py — changed 67 times, complexity 412, no test file, 1 coupling across a module boundary",
+                    "api/models/survey.py — changed 52 times, complexity 180, 1 coupling across a module boundary",
+                    "web/src/Dashboard.jsx — changed 44 times, complexity 210, no test file"],
+          source="structure"),
 
         # Baseline. Licence is `present` with a null SPDX id, which is the
         # upstream `unrecognised` state and triggers its own note.
