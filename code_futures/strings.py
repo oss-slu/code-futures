@@ -68,7 +68,9 @@ Two numbers are deliberately absent. We do not publish the OpenSSF Scorecard's 0
 
 Use the outcome counts as an index to find your place. Each probe reports on one practice, and the practices a project needs depend on what it is for."""
 
-MULTI_LANGUAGE_COUNT = "{findings} findings from {probes} probes, because `lint` and `format` are answered once per language."
+MULTI_LANGUAGE_COUNT = (
+    "{findings} findings from {probes} probes, because `lint` and `format` are answered once per language."
+)
 
 WHOLLY_UNREADABLE = """## **This report is empty, and that is our fault**
 
@@ -121,28 +123,55 @@ DETAIL: dict[tuple[str, Outcome], str] = {
     # measurement is data and the guidebook teaches reading it. `absent`
     # means the analysis ran and found nothing worth reporting, which is a
     # good result rather than a gap.
-    ("structure.hotspots", Outcome.PRESENT): "{count} files where change frequency and complexity both concentrate. Top: `{top}`, changed {top_changes} times, complexity {top_complexity}.",
+    (
+        "structure.hotspots",
+        Outcome.PRESENT,
+    ): "{count} files where change frequency and complexity both concentrate. Top: `{top}`, changed {top_changes} times, complexity {top_complexity}.",
     ("structure.hotspots", Outcome.ABSENT): "No file stands out against this repository's own distribution.",
-    ("structure.change_coupling", Outcome.PRESENT): "{count} file pairs change together in more than {threshold}% of the commits touching either. Strongest: `{a}` and `{b}`, {degree}% across {together} commits.",
+    (
+        "structure.change_coupling",
+        Outcome.PRESENT,
+    ): "{count} file pairs change together in more than {threshold}% of the commits touching either. Strongest: `{a}` and `{b}`, {degree}% across {together} commits.",
     ("structure.change_coupling", Outcome.ABSENT): "No file pair meets the reporting threshold.",
-    ("structure.untested_modules", Outcome.PRESENT): "{count} frequently-changed source files have no corresponding test file.",
-    ("structure.untested_modules", Outcome.ABSENT): "Every frequently-changed source file has a corresponding test file.",
+    (
+        "structure.untested_modules",
+        Outcome.PRESENT,
+    ): "{count} frequently-changed source files have no corresponding test file.",
+    (
+        "structure.untested_modules",
+        Outcome.ABSENT,
+    ): "Every frequently-changed source file has a corresponding test file.",
     ("structure.duplication", Outcome.PRESENT): "{density}% of lines are duplicated, across {blocks} blocks.",
     ("structure.duplication", Outcome.ABSENT): "Duplication is below the reporting threshold.",
-    ("structure.complexity", Outcome.PRESENT): "{total} points of cognitive complexity across {files} files. Highest: `{top}` at {top_value}.",
+    (
+        "structure.complexity",
+        Outcome.PRESENT,
+    ): "{total} points of cognitive complexity across {files} files. Highest: `{top}` at {top_value}.",
     ("structure.complexity", Outcome.ABSENT): "No file exceeds the complexity reporting threshold.",
-    ("structure.cohesion", Outcome.PRESENT): "{across} of {total} strongly-coupled pairs cross a module boundary ({ratio}%).",
+    (
+        "structure.cohesion",
+        Outcome.PRESENT,
+    ): "{across} of {total} strongly-coupled pairs cross a module boundary ({ratio}%).",
     ("structure.cohesion", Outcome.ABSENT): "All strong coupling stays inside a module.",
-    ("structure.blast_radius", Outcome.PRESENT): "A typical change touches {median} files. The largest tenth touch {p90} or more; the largest touched {largest}.",
+    (
+        "structure.blast_radius",
+        Outcome.PRESENT,
+    ): "A typical change touches {median} files. The largest tenth touch {p90} or more; the largest touched {largest}.",
     ("structure.blast_radius", Outcome.ABSENT): "Not enough history to describe a change-size distribution.",
     ("structure.tidy_first", Outcome.PRESENT): "`{top}` would pay back soonest: {reasons}.",
     ("structure.tidy_first", Outcome.ABSENT): "No file combines high churn with high cost to work in.",
     # --- Baseline: presence detection, so the evidence is a path ---------
     ("practice.readme", Outcome.PRESENT): "`{path}`",
     ("practice.readme", Outcome.ABSENT): "No README found.",
-    ("practice.readme_sections", Outcome.PRESENT): "Covers {found} of four expected sections. Missing: {missing}.",
+    (
+        "practice.readme_sections",
+        Outcome.PRESENT,
+    ): "Covers {found} of four expected sections. Missing: {missing}.",
     ("practice.readme_sections", Outcome.ENFORCED): "Covers all four expected sections.",
-    ("practice.readme_sections", Outcome.ABSENT): "None of the four expected sections were found. Expected Overview, Tech Stack, Installation, and Project Structure.",
+    (
+        "practice.readme_sections",
+        Outcome.ABSENT,
+    ): "None of the four expected sections were found. Expected Overview, Tech Stack, Installation, and Project Structure.",
     ("practice.contributing", Outcome.PRESENT): "`{path}`",
     ("practice.contributing", Outcome.ABSENT): "Searched the root, `docs/`, and `.github/`.",
     ("practice.code_of_conduct", Outcome.PRESENT): "`{path}`",
@@ -195,11 +224,23 @@ DETAIL: dict[tuple[str, Outcome], str] = {
     # the trap in this section: the settings page looks reassuring while an
     # unreviewed pull request can still merge.
     ("review.required", Outcome.ENFORCED): "`{branch}` requires {reviews} approving review(s).",
-    ("review.required", Outcome.PRESENT): "`{branch}` is protected. Required approving reviews: {reviews}. Status checks: {status_checks}. Administrators: {admins}.",
+    (
+        "review.required",
+        Outcome.PRESENT,
+    ): "`{branch}` is protected. Required approving reviews: {reviews}. Status checks: {status_checks}. Administrators: {admins}.",
     ("review.required", Outcome.ABSENT): "`{branch}` is not protected.",
-    ("review.practiced", Outcome.ENFORCED): "{reviewed} of the last {total} merged pull requests carried an approving review.",
-    ("review.practiced", Outcome.PRESENT): "{reviewed} of the last {total} merged pull requests carried an approving review.",
-    ("review.practiced", Outcome.ABSENT): "None of the last {total} merged pull requests carried an approving review.",
+    (
+        "review.practiced",
+        Outcome.ENFORCED,
+    ): "{reviewed} of the last {total} merged pull requests carried an approving review.",
+    (
+        "review.practiced",
+        Outcome.PRESENT,
+    ): "{reviewed} of the last {total} merged pull requests carried an approving review.",
+    (
+        "review.practiced",
+        Outcome.ABSENT,
+    ): "None of the last {total} merged pull requests carried an approving review.",
     ("deps.known_vulnerabilities", Outcome.PRESENT): "{count} dependencies carry known advisories.",
     ("deps.known_vulnerabilities", Outcome.ABSENT): "No dependencies with known advisories.",
     ("ci.present", Outcome.ENFORCED): "{count} workflows: {workflows}.",
@@ -208,7 +249,10 @@ DETAIL: dict[tuple[str, Outcome], str] = {
     ("security.sast", Outcome.ENFORCED): "{reason}",
     ("security.sast", Outcome.ABSENT): "No static analysis tool detected.",
     ("security.token_permissions", Outcome.ENFORCED): "Workflows declare explicit permissions.",
-    ("security.token_permissions", Outcome.ABSENT): "Workflows declare no top-level `permissions:` block, so jobs run with the repository default.",
+    (
+        "security.token_permissions",
+        Outcome.ABSENT,
+    ): "Workflows declare no top-level `permissions:` block, so jobs run with the repository default.",
     ("security.workflow_safety", Outcome.ENFORCED): "No dangerous workflow patterns detected.",
     ("security.workflow_safety", Outcome.ABSENT): "{reason}",
     ("deps.update_tool", Outcome.ENFORCED): "{tool} at `{config}`.",
@@ -221,7 +265,10 @@ DETAIL: dict[tuple[str, Outcome], str] = {
     ("quality.gate", Outcome.PRESENT): "Quality gate `{gate}` is defined. No CI step applies it.",
     ("quality.gate", Outcome.ABSENT): "No quality gate configured.",
     ("quality.hotspots_reviewed", Outcome.ENFORCED): "{reviewed} of {total} security hotspots reviewed.",
-    ("quality.hotspots_reviewed", Outcome.PRESENT): "{total} security hotspots flagged, {reviewed} reviewed. The rest are waiting on a person.",
+    (
+        "quality.hotspots_reviewed",
+        Outcome.PRESENT,
+    ): "{total} security hotspots flagged, {reviewed} reviewed. The rest are waiting on a person.",
     ("quality.hotspots_reviewed", Outcome.ABSENT): "No security hotspots flagged.",
 }
 
@@ -500,7 +547,7 @@ REMEDIATION: dict[str, dict] = {
         "label": "reviewing the flagged security hotspots",
         "why": [
             "Each one is a question somebody has to answer, and they do not expire",
-            "Most reviews end in \"this is fine\", which is a cheap result to record",
+            'Most reviews end in "this is fine", which is a cheap result to record',
         ],
         "step": "**Review the open security hotspots.** Decide whether the context makes each one safe and record the decision. Most will be fine; the record is what makes that visible next time.",
     },

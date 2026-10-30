@@ -60,9 +60,7 @@ def _gh_token() -> str | None:
     dependency tree.
     """
     try:
-        out = subprocess.run(
-            ["gh", "auth", "token"], capture_output=True, text=True, timeout=10, check=False
-        )
+        out = subprocess.run(["gh", "auth", "token"], capture_output=True, text=True, timeout=10, check=False)
     except (OSError, subprocess.SubprocessError):
         return None
     token = out.stdout.strip()
@@ -107,9 +105,7 @@ def load(path: Path | None = None) -> Config:
     )
 
     if not cfg.sonar_token:
-        cfg.warnings.append(
-            "no sonar.token; the Code Quality Analysis section will report unreadable"
-        )
+        cfg.warnings.append("no sonar.token; the Code Quality Analysis section will report unreadable")
     if cfg.practice_snapshot and not cfg.practice_snapshot.exists():
         cfg.warnings.append(f"practice snapshot not found at {cfg.practice_snapshot}")
     return cfg

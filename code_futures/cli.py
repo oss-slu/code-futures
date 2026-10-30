@@ -14,15 +14,15 @@ from __future__ import annotations
 
 import argparse
 import sys
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 
-from . import collectors, config, github, render
-from .schema import PROBES, RepositoryReport, Snapshot
+from . import collectors, config, github, local, render
+from .schema import PROBES, Outcome, ProbeResult, RepositoryReport, Snapshot
 
 
 def _now() -> str:
-    return datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
+    return datetime.now(UTC).strftime("%Y-%m-%d %H:%M UTC")
 
 
 def cmd_doctor(args, cfg) -> int:
@@ -43,8 +43,14 @@ def cmd_doctor(args, cfg) -> int:
     print("         " + ("installed" if have_sc else "not installed; those probes report unreadable"))
 
     print(f"  [{'ok' if cfg.has_sonar else 'warn'}] SonarQube Cloud")
-    print("         " + (f"token present, organisation {cfg.sonar_org}" if cfg.has_sonar
-                         else "no token; the Code Quality Analysis section reports unreadable"))
+    print(
+        "         "
+        + (
+            f"token present, organisation {cfg.sonar_org}"
+            if cfg.has_sonar
+            else "no token; the Code Quality Analysis section reports unreadable"
+        )
+    )
 
     if cfg.practice_snapshot:
         exists = cfg.practice_snapshot.exists()
@@ -81,13 +87,12 @@ def _build(repository: str, cfg, practice: dict | None) -> RepositoryReport:
     # Any probe no collector spoke to is unreadable, never absent. A silently
     # missing probe would render as a gap in somebody's repository.
     seen = {r.id for r in results}
-    from .schema import Outcome, ProbeResult
-
     for probe in PROBES:
         if probe.id not in seen:
             results.append(
                 ProbeResult(
-                    id=probe.id, outcome=Outcome.UNREADABLE,
+                    id=probe.id,
+                    outcome=Outcome.UNREADABLE,
                     attributes={"reason": "No collector reported on this probe."},
                     source="none",
                 )
@@ -102,6 +107,94 @@ def _build(repository: str, cfg, practice: dict | None) -> RepositoryReport:
         results=results,
         contributors=github.contributor_count(repository),
     )
+
+
+def cmd_self(args, cfg) -> int:
+    """Analyse the checkout this is running inside.
+
+    A smoke test and a demonstration at once: a tool that reports on
+    engineering practice should be willing to say what its own looks like,
+    and running the collectors against a real repository catches breakage
+    that unit tests with hand-built fixtures do not.
+
+    Entirely local. Structure comes from the checkout's git history,
+    capability detection from its files, and the baseline from the
+    filesystem. No token, no network, nothing to configure -- which is what
+    makes it usable as a CI step.
+    """
+    root = Path(args.path).resolve()
+
+    if local.is_shallow(root):
+        print(
+            "refusing: this checkout is shallow, so the history is truncated.\n"
+            "Structural findings computed from it would be wrong rather than missing.\n"
+            "Use actions/checkout with fetch-depth: 0.",
+            file=sys.stderr,
+        )
+        return 1
+
+    paths = local.tree(root)
+    if paths is None:
+        print(f"not a git repository: {root}", file=sys.stderr)
+        return 1
+
+    wfs = local.workflows(root) or {}
+    reader = lambda p: local.file(root, p)  # noqa: E731
+
+    results = collectors.local_practice(paths, reader)
+    caps, languages = collectors.capabilities(
+        args.repository, paths=paths, wfs=wfs, read_file=reader, _local=True
+    )
+    results += caps
+    results += collectors.structural(args.repository, paths, log_text=local.log(root), read_file=reader)
+
+    # Scorecard and Sonar need a network and a token. Absent either, their
+    # probes report unreadable, which is the designed degradation rather than
+    # a failure of the run.
+    if args.remote:
+        results += collectors.scorecard(args.repository, cfg)
+        results += collectors.sonar(args.repository, cfg)
+
+    seen = {r.id for r in results}
+    for probe in PROBES:
+        if probe.id not in seen:
+            results.append(
+                ProbeResult(
+                    id=probe.id,
+                    outcome=Outcome.UNREADABLE,
+                    attributes={"reason": "Not collected in a local run; this needs a network."},
+                    source="none",
+                )
+            )
+
+    sha, _branch = local.head(root)
+    report = RepositoryReport(
+        repository=args.repository,
+        collected_at=_now(),
+        commit=sha,
+        languages=languages,
+        results=results,
+        contributors=local.contributor_count(root),
+    )
+
+    text = render.render(report)
+    if args.output:
+        Path(args.output).write_text(text)
+        print(f"wrote {args.output}", file=sys.stderr)
+    else:
+        print(text)
+
+    counts = report.counts()
+    print(
+        "  ".join(f"{o.value}={counts[o]}" for o in Outcome),
+        file=sys.stderr,
+    )
+    # The smoke test proper: a run where nothing could be established means
+    # the collectors are broken, not that the repository is bare.
+    if report.wholly_unreadable:
+        print("FAILED: every probe was unreadable", file=sys.stderr)
+        return 1
+    return 0
 
 
 def cmd_probe(args, cfg) -> int:
@@ -170,6 +263,12 @@ def main(argv: list[str] | None = None) -> int:
     ss = sub.add_parser("sweep", help="report on every repository, writing a snapshot")
     ss.add_argument("repositories", nargs="*", help="OWNER/REPO, or empty for the whole organisation")
 
+    sf = sub.add_parser("self", help="analyse the checkout this is running inside")
+    sf.add_argument("--path", default=".", help="repository root (default: cwd)")
+    sf.add_argument("--repository", default="oss-slu/code-futures", help="name to label the report with")
+    sf.add_argument("-o", "--output", help="write markdown here instead of stdout")
+    sf.add_argument("--remote", action="store_true", help="also run Scorecard and Sonar")
+
     sr = sub.add_parser("render", help="render a snapshot to markdown reports")
     sr.add_argument("snapshot")
     sr.add_argument("-o", "--output")
@@ -177,7 +276,11 @@ def main(argv: list[str] | None = None) -> int:
     args = p.parse_args(argv)
     cfg = config.load(args.config)
     return {
-        "doctor": cmd_doctor, "probe": cmd_probe, "sweep": cmd_sweep, "render": cmd_render,
+        "doctor": cmd_doctor,
+        "self": cmd_self,
+        "probe": cmd_probe,
+        "sweep": cmd_sweep,
+        "render": cmd_render,
     }[args.command](args, cfg)
 
 

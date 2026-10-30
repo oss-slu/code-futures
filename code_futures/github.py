@@ -31,9 +31,7 @@ class AuthError(RuntimeError):
 
 def _gh(*args: str, timeout: int = 60) -> tuple[int, str, str]:
     try:
-        p = subprocess.run(
-            ["gh", *args], capture_output=True, text=True, timeout=timeout, check=False
-        )
+        p = subprocess.run(["gh", *args], capture_output=True, text=True, timeout=timeout, check=False)
     except FileNotFoundError:
         return 127, "", "gh not found on PATH"
     except subprocess.TimeoutExpired:

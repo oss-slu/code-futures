@@ -70,9 +70,7 @@ class TestSections:
             assert f"## **{i}. {section.value}**" in out
 
     def test_wholly_unreadable_report_says_so_first(self):
-        results = [
-            ProbeResult(p.id, Outcome.UNREADABLE, attributes={"reason": "x"}) for p in PROBES[:5]
-        ]
+        results = [ProbeResult(p.id, Outcome.UNREADABLE, attributes={"reason": "x"}) for p in PROBES[:5]]
         out = render(_report(results))
         assert "This report is empty, and that is our fault" in out
         assert out.index("that is our fault") < out.index("## **1.")
@@ -96,7 +94,10 @@ class TestDetail:
     def test_enforced_without_config_does_not_invent_a_path(self):
         """Six repositories run a linter with no config file anywhere."""
         r = ProbeResult(
-            "lint", Outcome.ENFORCED, language="Python", tool="pylint",
+            "lint",
+            Outcome.ENFORCED,
+            language="Python",
+            tool="pylint",
             attributes={"invocation": ".github/workflows/pylint.yml", "config": ""},
         )
         out = render(_report([r]))
@@ -110,7 +111,8 @@ class TestDetail:
         "Configured, and invoked by CI."
         """
         r = ProbeResult(
-            "ci.present", Outcome.ENFORCED,
+            "ci.present",
+            Outcome.ENFORCED,
             attributes={"count": "3", "workflows": "`CI`, `CodeQL`"},
         )
         assert "3 workflows: `CI`, `CodeQL`." in render(_report([r]))
@@ -131,8 +133,14 @@ class TestNotes:
 
     def test_protection_with_zero_reviews_is_called_out(self):
         r = ProbeResult(
-            "review.required", Outcome.PRESENT,
-            attributes={"branch": "main", "reviews": "0", "status_checks": "not required", "admins": "exempt"},
+            "review.required",
+            Outcome.PRESENT,
+            attributes={
+                "branch": "main",
+                "reviews": "0",
+                "status_checks": "not required",
+                "admins": "exempt",
+            },
         )
         out = render(_report([r]))
         assert "Protection that permits unreviewed merges" in out
@@ -140,7 +148,10 @@ class TestNotes:
 
     def test_non_blocking_check_is_called_out(self):
         r = ProbeResult(
-            "lint", Outcome.ENFORCED, language="Python", tool="pylint",
+            "lint",
+            Outcome.ENFORCED,
+            language="Python",
+            tool="pylint",
             attributes={"invocation": "ci.yml", "config": "", "blocking": "false"},
         )
         assert "Runs, but cannot fail" in render(_report([r]))
@@ -202,9 +213,16 @@ class TestStructure:
         """A coupled pair a team cannot see is a statistic. One they can see
         is a conversation about where a boundary belongs."""
         r = ProbeResult(
-            "structure.change_coupling", Outcome.PRESENT,
-            attributes={"count": "2", "threshold": "60", "a": "models.py",
-                        "b": "routes.py", "degree": "83", "together": "24"},
+            "structure.change_coupling",
+            Outcome.PRESENT,
+            attributes={
+                "count": "2",
+                "threshold": "60",
+                "a": "models.py",
+                "b": "routes.py",
+                "degree": "83",
+                "together": "24",
+            },
             evidence=["models.py <-> routes.py (83%)"],
         )
         out = render(_report([r]))
@@ -215,9 +233,16 @@ class TestStructure:
         """A young repository reports that recently-written files were
         recently written, and the report should say so."""
         r = ProbeResult(
-            "structure.hotspots", Outcome.PRESENT,
-            attributes={"count": "2", "top": "a.py", "top_changes": "4",
-                        "top_complexity": "90", "thin": "true", "commits": "18"},
+            "structure.hotspots",
+            Outcome.PRESENT,
+            attributes={
+                "count": "2",
+                "top": "a.py",
+                "top_changes": "4",
+                "top_complexity": "90",
+                "thin": "true",
+                "commits": "18",
+            },
         )
         out = render(_report([r]))
         assert "This repository is young" in out
@@ -225,9 +250,16 @@ class TestStructure:
 
     def test_long_history_is_not_flagged(self):
         r = ProbeResult(
-            "structure.hotspots", Outcome.PRESENT,
-            attributes={"count": "2", "top": "a.py", "top_changes": "60",
-                        "top_complexity": "400", "thin": "false", "commits": "300"},
+            "structure.hotspots",
+            Outcome.PRESENT,
+            attributes={
+                "count": "2",
+                "top": "a.py",
+                "top_changes": "60",
+                "top_complexity": "400",
+                "thin": "false",
+                "commits": "300",
+            },
         )
         assert "This repository is young" not in render(_report([r]))
 
@@ -274,6 +306,5 @@ class TestRemediationTriggers:
         assert "most frequently changed untested file" in out
 
     def test_identified_licence_is_not_actionable(self):
-        r = ProbeResult("practice.license", Outcome.PRESENT,
-                        attributes={"path": "LICENSE", "spdx": "MIT"})
+        r = ProbeResult("practice.license", Outcome.PRESENT, attributes={"path": "LICENSE", "spdx": "MIT"})
         assert S.WHERE_TO_START_NOTHING in render(_report([r]))

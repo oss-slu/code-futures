@@ -13,14 +13,22 @@ pipeline -- not a policy, just a function nobody calls there.
 from __future__ import annotations
 
 from . import strings as S
-from .schema import PROBES_BY_ID, Outcome, ProbeResult, RepositoryReport, Section
+from .schema import Outcome, ProbeResult, RepositoryReport, Section
 
 _OUTCOME_ORDER = (Outcome.ENFORCED, Outcome.PRESENT, Outcome.ABSENT, Outcome.UNREADABLE)
 
 # Capability probes, where `present` means configured-but-never-run. The
 # baseline probes cannot reach `enforced`, so a `present` there is simply the
 # artifact existing and carries no such implication.
-_CAPABILITY = ("lint", "format", "test.unit", "test.integration", "test.e2e", "test.coverage", "test.mutation")
+_CAPABILITY = (
+    "lint",
+    "format",
+    "test.unit",
+    "test.integration",
+    "test.e2e",
+    "test.coverage",
+    "test.mutation",
+)
 
 
 def _detail(r: ProbeResult) -> str:
@@ -140,9 +148,11 @@ def _notes(report: RepositoryReport, section: Section) -> list[str]:
         prac = got.get(("review.practiced", None))
         # The interesting case is disagreement between the rule and what
         # actually happens, in either direction.
-        if req and prac and req.outcome is not Outcome.UNREADABLE and prac.outcome is not Outcome.UNREADABLE:
-            if req.outcome != prac.outcome:
-                out.append(S.NOTE_POLICY_VS_PRACTICE)
+        readable = (
+            req and prac and req.outcome is not Outcome.UNREADABLE and prac.outcome is not Outcome.UNREADABLE
+        )
+        if readable and req.outcome != prac.outcome:
+            out.append(S.NOTE_POLICY_VS_PRACTICE)
 
     if section is Section.BASELINE:
         lic = got.get(("practice.license", None))
@@ -153,11 +163,7 @@ def _notes(report: RepositoryReport, section: Section) -> list[str]:
         langs = sorted({r.language for r in report.by_section(section) if r.language})
         outcomes = {r.outcome for r in report.by_section(section)}
         if len(langs) > 1 and len(outcomes) > 1:
-            out.append(
-                S.NOTE_LANGUAGES_DISAGREE.format(
-                    count=_spell(len(langs)), languages=_join(langs)
-                )
-            )
+            out.append(S.NOTE_LANGUAGES_DISAGREE.format(count=_spell(len(langs)), languages=_join(langs)))
         else:
             stale = [r for r in report.by_section(section) if r.outcome is Outcome.PRESENT]
             if stale:
@@ -184,7 +190,9 @@ def _notes(report: RepositoryReport, section: Section) -> list[str]:
         results = report.by_section(section)
         absent = sum(1 for r in results if r.outcome is Outcome.ABSENT)
         if absent >= 2:
-            out.append(S.NOTE_ABSENCE_OK.format(absent=_spell(absent).capitalize(), total=_spell(len(results))))
+            out.append(
+                S.NOTE_ABSENCE_OK.format(absent=_spell(absent).capitalize(), total=_spell(len(results)))
+            )
 
     if section is Section.REVIEW:
         rv = got.get(("review.required", None))
@@ -280,7 +288,12 @@ def _where_to_start(report: RepositoryReport) -> str:
     return "\n".join(parts)
 
 
-def render(report: RepositoryReport, *, fabricated: bool = False, classification: str = "Internal — shareable within the program, not published") -> str:
+def render(
+    report: RepositoryReport,
+    *,
+    fabricated: bool = False,
+    classification: str = "Internal — shareable within the program, not published",
+) -> str:
     """Render one repository report to Markdown."""
     p: list[str] = [f"# {S.TITLE.format(repository=report.repository)}", ""]
 
@@ -327,7 +340,11 @@ def render(report: RepositoryReport, *, fabricated: bool = False, classification
         for r in bad:
             rows.append([f"`{r.id}`", (r.attributes.get("reason") or "unknown").rstrip(".")])
         p.append(_table(rows))
-        p += ["", f"{len(bad)} of {n_probes} probes. A long list here, or a complete one, would mean the sweep failed rather than the repository being empty.", ""]
+        p += [
+            "",
+            f"{len(bad)} of {n_probes} probes. A long list here, or a complete one, would mean the sweep failed rather than the repository being empty.",
+            "",
+        ]
     else:
         p += ["Every probe returned an answer.", ""]
 

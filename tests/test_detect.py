@@ -89,7 +89,7 @@ jobs:
         It lists in the Actions UI and runs nothing. Reading it as a lint
         workflow would credit a repository with a check it does not have.
         """
-        wf = "\n".join("# " + l for l in ["name: Pylint", "jobs:", "  run: pylint ."])
+        wf = "\n".join("# " + x for x in ["name: Pylint", "jobs:", "  run: pylint ."])
         assert detect.run_lines(wf) == []
 
     def test_shell_continuation_is_joined(self):

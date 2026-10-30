@@ -54,7 +54,7 @@ from __future__ import annotations
 import re
 import subprocess
 import tempfile
-from collections import Counter, defaultdict
+from collections import Counter
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -130,7 +130,7 @@ class StructureReport:
     coupled: list[CoupledPair] = field(default_factory=list)
     hotspots: list[Hotspot] = field(default_factory=list)
     churn: Counter = field(default_factory=Counter)
-    blast: "BlastRadius | None" = None
+    blast: BlastRadius | None = None
     unreadable: str | None = None
     """Set when history could not be read. Never a finding about the code."""
 
@@ -188,7 +188,7 @@ def change_coupling(commits: list[Commit]) -> list[CoupledPair]:
             continue
         appears.update(files)
         for i, a in enumerate(files):
-            for b in files[i + 1:]:
+            for b in files[i + 1 :]:
                 together[(a, b)] += 1
 
     pairs = []
@@ -236,28 +236,48 @@ def clone_history(repository: str, workdir: Path) -> str | None:
     """
     target = workdir / "repo.git"
     clone = subprocess.run(
-        ["git", "clone", "--bare", "--filter=blob:none", "--quiet",
-         f"https://github.com/{repository}.git", str(target)],
-        capture_output=True, text=True, timeout=300, check=False,
+        [
+            "git",
+            "clone",
+            "--bare",
+            "--filter=blob:none",
+            "--quiet",
+            f"https://github.com/{repository}.git",
+            str(target),
+        ],
+        capture_output=True,
+        text=True,
+        timeout=300,
+        check=False,
     )
     if clone.returncode != 0:
         return None
     log = subprocess.run(
         ["git", "-C", str(target), "log", "--name-only", "--no-merges", "--format=%H"],
-        capture_output=True, text=True, timeout=120, check=False,
+        capture_output=True,
+        text=True,
+        timeout=120,
+        check=False,
     )
     return log.stdout if log.returncode == 0 else None
 
 
-def analyse(repository: str, fetch_file) -> StructureReport:
+def analyse(repository: str, fetch_file, log_text: str | None = None) -> StructureReport:
     """Full structural analysis for one repository.
 
     `fetch_file(path) -> str | None` supplies file contents for the hotspot
     candidates. Injected rather than imported so this module stays testable
     without a network.
+
+    `log_text` supplies history directly, skipping the clone. That is how
+    self-analysis works in CI: the checkout already has the history, so the
+    whole structural analysis runs with no network and no token.
     """
-    with tempfile.TemporaryDirectory() as tmp:
-        text = clone_history(repository, Path(tmp))
+    if log_text is not None:
+        text: str | None = log_text
+    else:
+        with tempfile.TemporaryDirectory() as tmp:
+            text = clone_history(repository, Path(tmp))
 
     if text is None:
         return StructureReport(unreadable="The repository history could not be read.")
@@ -372,7 +392,9 @@ def blast_radius(commits: list[Commit]) -> BlastRadius:
     for c in big:
         appears.update(set(c.files))
     return BlastRadius(
-        median=median, p90=p90, largest=sizes[-1],
+        median=median,
+        p90=p90,
+        largest=sizes[-1],
         worst_files=appears.most_common(5),
     )
 
@@ -420,9 +442,7 @@ class TidyCandidate:
         return self.changes * max(self.complexity, 1) * weight
 
 
-def tidy_first(
-    hotspots: list[Hotspot], coh: Cohesion, untested: set[str]
-) -> list[TidyCandidate]:
+def tidy_first(hotspots: list[Hotspot], coh: Cohesion, untested: set[str]) -> list[TidyCandidate]:
     """Rank files by how soon tidying them would pay off."""
     crossing: Counter = Counter()
     for p in coh.across:
@@ -431,8 +451,11 @@ def tidy_first(
 
     out = [
         TidyCandidate(
-            path=h.path, changes=h.changes, complexity=h.complexity,
-            untested=h.path in untested, crossing=crossing.get(h.path, 0),
+            path=h.path,
+            changes=h.changes,
+            complexity=h.complexity,
+            untested=h.path in untested,
+            crossing=crossing.get(h.path, 0),
         )
         for h in hotspots
     ]

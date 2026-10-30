@@ -49,10 +49,27 @@ from dataclasses import dataclass, field
 # named `vendor_api` is not swallowed.
 VENDORED: frozenset[str] = frozenset(
     {
-        ".venv", "venv", "env", ".env", "site-packages", "node_modules",
-        "vendor", "third_party", "thirdparty", "external", "dist", "build",
-        ".tox", ".nox", "__pypackages__", "bower_components", "target",
-        ".git", ".mypy_cache", ".pytest_cache", ".ruff_cache",
+        ".venv",
+        "venv",
+        "env",
+        ".env",
+        "site-packages",
+        "node_modules",
+        "vendor",
+        "third_party",
+        "thirdparty",
+        "external",
+        "dist",
+        "build",
+        ".tox",
+        ".nox",
+        "__pypackages__",
+        "bower_components",
+        "target",
+        ".git",
+        ".mypy_cache",
+        ".pytest_cache",
+        ".ruff_cache",
         # Code generators emit manifests. One repository here has a
         # Prisma-generated `package.json` under `server/src/generated/prisma/`,
         # which is nobody's configuration.
@@ -155,11 +172,15 @@ _CONFIG: tuple[Signal, ...] = (
     Signal("ruff format", "Python", "format", content_key="[tool.ruff.format]", in_file="pyproject.toml"),
     # Python — test
     Signal("pytest", "Python", "test.unit", filename="pytest.ini"),
-    Signal("pytest", "Python", "test.unit", content_key="[tool.pytest.ini_options]", in_file="pyproject.toml"),
+    Signal(
+        "pytest", "Python", "test.unit", content_key="[tool.pytest.ini_options]", in_file="pyproject.toml"
+    ),
     Signal("pytest", "Python", "test.unit", filename="conftest.py"),
     # Python — coverage
     Signal("coverage", "Python", "test.coverage", filename=".coveragerc"),
-    Signal("coverage", "Python", "test.coverage", content_key="[tool.coverage.run]", in_file="pyproject.toml"),
+    Signal(
+        "coverage", "Python", "test.coverage", content_key="[tool.coverage.run]", in_file="pyproject.toml"
+    ),
     Signal("pytest-cov", "Python", "test.coverage", content_key="pytest-cov", in_file="requirements.txt"),
     # Node — lint
     Signal("eslint", "JavaScript", "lint", filename=".eslintrc"),
@@ -262,7 +283,12 @@ _RUN: tuple[tuple[str, str, str, str], ...] = (
     (r"\b(npm|yarn|pnpm)\s+run\s+(check:)?type(check|s|script)\b", "tsc", "JavaScript", "lint"),
     (r"\btsc\s+--noEmit\b", "tsc", "JavaScript", "lint"),
     # The format script is spelled five different ways here.
-    (r"\b(npm|yarn|pnpm)\s+run\s+(format|fmt|prettier:check|format:check)\b", "prettier", "JavaScript", "format"),
+    (
+        r"\b(npm|yarn|pnpm)\s+run\s+(format|fmt|prettier:check|format:check)\b",
+        "prettier",
+        "JavaScript",
+        "format",
+    ),
     (r"\bprettier\b", "prettier", "JavaScript", "format"),
     (r"\bbiome\s+format\b", "biome", "JavaScript", "format"),
     (r"\b(npm|yarn|pnpm)\s+(run\s+)?test\b", "npm test", "JavaScript", "test.unit"),
@@ -302,7 +328,7 @@ _RUN: tuple[tuple[str, str, str, str], ...] = (
     (r"\bcargo\s+mutants\b", "cargo-mutants", "Rust", "test.mutation"),
 )
 
-_COMPILED = tuple((re.compile(p), t, l, k) for p, t, l, k in _RUN)
+_COMPILED = tuple((re.compile(rx), tool, lang, kind) for rx, tool, lang, kind in _RUN)
 
 # A step that cannot fail the build. All four forms were observed here.
 _NON_BLOCKING = re.compile(r"\|\|\s*true\b|--exit-zero\b|--fail-under=|\|\|\s*echo\b")
@@ -355,8 +381,11 @@ def detect_config(paths: dict[str, str]) -> list[Finding]:
             seen.add(key)
             out.append(
                 Finding(
-                    kind=sig.kind, language=sig.language, tool=sig.tool,
-                    config=path, evidence=[path],
+                    kind=sig.kind,
+                    language=sig.language,
+                    tool=sig.tool,
+                    config=path,
+                    evidence=[path],
                 )
             )
             break
@@ -370,7 +399,7 @@ def _strip_comments(text: str) -> str:
     Actions UI and runs nothing, and without this it would read as a lint
     workflow.
     """
-    return "\n".join(l for l in text.splitlines() if not l.lstrip().startswith("#"))
+    return "\n".join(line for line in text.splitlines() if not line.lstrip().startswith("#"))
 
 
 def run_lines(workflow: str) -> list[str]:
@@ -454,14 +483,16 @@ def detect_runs(workflows: dict[str, str], scripts: dict[str, str] | None = None
                 seen.add(key)
                 # A formatter in write mode rewrites files on a throwaway
                 # runner and always passes, so it gates nothing.
-                blocking = not (
-                    _NON_BLOCKING.search(haystack) or _WRITE_MODE.search(resolved)
-                )
+                blocking = not (_NON_BLOCKING.search(haystack) or _WRITE_MODE.search(resolved))
                 out.append(
                     Finding(
-                        kind=kind, language=lang, tool=tool,
-                        invocation=path, command=cmd,
-                        blocking=blocking, evidence=[path],
+                        kind=kind,
+                        language=lang,
+                        tool=tool,
+                        invocation=path,
+                        command=cmd,
+                        blocking=blocking,
+                        evidence=[path],
                     )
                 )
     return out

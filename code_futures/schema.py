@@ -57,7 +57,7 @@ class Outcome(str, Enum):
     """We could not find out. Describes our tooling, never the repository."""
 
     @classmethod
-    def from_lookup(cls, found: bool | None) -> "Outcome":
+    def from_lookup(cls, found: bool | None) -> Outcome:
         """Build from a lookup that may itself have failed.
 
         `True` is present, `False` is absent, `None` is unreadable. Routing
@@ -137,33 +137,61 @@ PROBES: tuple[Probe, ...] = (
     # "runs" change coupling, so their top rung is `present`, meaning the
     # analysis produced a finding. `absent` means it ran and found nothing
     # worth reporting, which is a genuinely good result rather than a gap.
-    Probe("structure.hotspots", Section.STRUCTURE,
-          "Where do complexity and change frequency concentrate?", top_rung=Outcome.PRESENT),
-    Probe("structure.change_coupling", Section.STRUCTURE,
-          "Which files keep changing together?", top_rung=Outcome.PRESENT),
-    Probe("structure.untested_modules", Section.STRUCTURE,
-          "Which frequently-changed modules have no tests?", top_rung=Outcome.PRESENT),
-    Probe("structure.duplication", Section.STRUCTURE,
-          "How much logic is duplicated?", top_rung=Outcome.PRESENT),
-    Probe("structure.complexity", Section.STRUCTURE,
-          "Which files carry the most cognitive complexity?", top_rung=Outcome.PRESENT),
+    Probe(
+        "structure.hotspots",
+        Section.STRUCTURE,
+        "Where do complexity and change frequency concentrate?",
+        top_rung=Outcome.PRESENT,
+    ),
+    Probe(
+        "structure.change_coupling",
+        Section.STRUCTURE,
+        "Which files keep changing together?",
+        top_rung=Outcome.PRESENT,
+    ),
+    Probe(
+        "structure.untested_modules",
+        Section.STRUCTURE,
+        "Which frequently-changed modules have no tests?",
+        top_rung=Outcome.PRESENT,
+    ),
+    Probe(
+        "structure.duplication", Section.STRUCTURE, "How much logic is duplicated?", top_rung=Outcome.PRESENT
+    ),
+    Probe(
+        "structure.complexity",
+        Section.STRUCTURE,
+        "Which files carry the most cognitive complexity?",
+        top_rung=Outcome.PRESENT,
+    ),
     # Cohesion is the same co-change data read against module boundaries.
     # Beck's framing: cohesion is coupling put in the right place, so a pair
     # inside one module is cohesion working and a pair spanning two is a
     # boundary that is not holding.
-    Probe("structure.cohesion", Section.STRUCTURE,
-          "How much coupling crosses a module boundary?", top_rung=Outcome.PRESENT),
+    Probe(
+        "structure.cohesion",
+        Section.STRUCTURE,
+        "How much coupling crosses a module boundary?",
+        top_rung=Outcome.PRESENT,
+    ),
     # The economic measurement Beck's cost argument points at:
     # cost(software) ~ cost(change) ~ cost(big change), and coupling is what
     # makes a change big. The tail of this distribution is the cost.
-    Probe("structure.blast_radius", Section.STRUCTURE,
-          "How many files does a typical change touch, and the worst ones?",
-          top_rung=Outcome.PRESENT),
+    Probe(
+        "structure.blast_radius",
+        Section.STRUCTURE,
+        "How many files does a typical change touch, and the worst ones?",
+        top_rung=Outcome.PRESENT,
+    ),
     # The question mark in *Tidy First?*. Tidying pays when it makes an
     # imminent change easier; tidying you will not cash in soon is cost
     # without return. This answers it with evidence rather than taste.
-    Probe("structure.tidy_first", Section.STRUCTURE,
-          "Where would tidying pay off soonest?", top_rung=Outcome.PRESENT),
+    Probe(
+        "structure.tidy_first",
+        Section.STRUCTURE,
+        "Where would tidying pay off soonest?",
+        top_rung=Outcome.PRESENT,
+    ),
     # --- Open Source Baseline -------------------------------------------
     # Sourced from the orchestration tooling's practice snapshot rather than
     # recollected. Its collector is tested, current, and already handles the
@@ -173,17 +201,41 @@ PROBES: tuple[Probe, ...] = (
     # The program's conventions require a README covering Overview, Tech
     # Stack, Installation and Project Structure. Checking only that the file
     # exists tests nothing a team cares about; opening it is nearly free.
-    Probe("practice.readme_sections", Section.BASELINE,
-          "Does the README cover the four expected sections?", top_rung=Outcome.PRESENT),
-    Probe("practice.contributing", Section.BASELINE, "Is there a contributing guide?", top_rung=Outcome.PRESENT),
-    Probe("practice.code_of_conduct", Section.BASELINE, "Is there a code of conduct?", top_rung=Outcome.PRESENT),
-    Probe("practice.license", Section.BASELINE, "Is there a licence, and is it identifiable?", top_rung=Outcome.PRESENT),
-    Probe("practice.issue_template", Section.BASELINE, "Is there an issue template?", top_rung=Outcome.PRESENT),
-    Probe("practice.pull_request_template", Section.BASELINE, "Is there a pull request template?", top_rung=Outcome.PRESENT),
-    Probe("practice.security_policy", Section.BASELINE, "Is there a security policy?", top_rung=Outcome.PRESENT),
+    Probe(
+        "practice.readme_sections",
+        Section.BASELINE,
+        "Does the README cover the four expected sections?",
+        top_rung=Outcome.PRESENT,
+    ),
+    Probe(
+        "practice.contributing", Section.BASELINE, "Is there a contributing guide?", top_rung=Outcome.PRESENT
+    ),
+    Probe(
+        "practice.code_of_conduct", Section.BASELINE, "Is there a code of conduct?", top_rung=Outcome.PRESENT
+    ),
+    Probe(
+        "practice.license",
+        Section.BASELINE,
+        "Is there a licence, and is it identifiable?",
+        top_rung=Outcome.PRESENT,
+    ),
+    Probe(
+        "practice.issue_template", Section.BASELINE, "Is there an issue template?", top_rung=Outcome.PRESENT
+    ),
+    Probe(
+        "practice.pull_request_template",
+        Section.BASELINE,
+        "Is there a pull request template?",
+        top_rung=Outcome.PRESENT,
+    ),
+    Probe(
+        "practice.security_policy", Section.BASELINE, "Is there a security policy?", top_rung=Outcome.PRESENT
+    ),
     # --- Linting and Formatting -----------------------------------------
     Probe("lint", Section.LINT, "Is a linter configured, and does CI invoke it?", per_language=True),
-    Probe("format", Section.LINT, "Is a formatter configured, and does CI check formatting?", per_language=True),
+    Probe(
+        "format", Section.LINT, "Is a formatter configured, and does CI check formatting?", per_language=True
+    ),
     # --- Testing ---------------------------------------------------------
     Probe("test.unit", Section.TEST, "Is a unit test runner configured, and invoked in CI?"),
     Probe("test.integration", Section.TEST, "Is there a separate integration suite?"),
@@ -208,8 +260,12 @@ PROBES: tuple[Probe, ...] = (
     # Recovered after being dropped as "inverted". A count of dependencies
     # with known advisories is data a team can act on this afternoon, and
     # withholding it because the probe reads backwards was the wrong trade.
-    Probe("deps.known_vulnerabilities", Section.SECURITY,
-          "Do any dependencies carry known advisories?", top_rung=Outcome.PRESENT),
+    Probe(
+        "deps.known_vulnerabilities",
+        Section.SECURITY,
+        "Do any dependencies carry known advisories?",
+        top_rung=Outcome.PRESENT,
+    ),
     # --- Code Quality Analysis (SonarQube Cloud) --------------------------
     # Its own section rather than folded into security, because what Sonar
     # contributes here is mostly not SAST. CodeQL does the heavier semantic
@@ -294,7 +350,7 @@ class ProbeResult:
         return d
 
     @classmethod
-    def from_dict(cls, d: dict) -> "ProbeResult":
+    def from_dict(cls, d: dict) -> ProbeResult:
         return cls(
             id=d["id"],
             outcome=Outcome(d["outcome"]),
@@ -372,7 +428,7 @@ class RepositoryReport:
         return d
 
     @classmethod
-    def from_dict(cls, d: dict) -> "RepositoryReport":
+    def from_dict(cls, d: dict) -> RepositoryReport:
         got = d.get("schema")
         if got != SCHEMA:
             raise ValueError(f"expected schema {SCHEMA}, got {got!r}")
@@ -415,7 +471,7 @@ class Snapshot:
         }
 
     @classmethod
-    def from_dict(cls, d: dict) -> "Snapshot":
+    def from_dict(cls, d: dict) -> Snapshot:
         got = d.get("schema")
         if got != SCHEMA:
             raise ValueError(f"expected schema {SCHEMA}, got {got!r}")
@@ -429,5 +485,5 @@ class Snapshot:
         return json.dumps(self.to_dict(), indent=2, sort_keys=False) + "\n"
 
     @classmethod
-    def loads(cls, text: str) -> "Snapshot":
+    def loads(cls, text: str) -> Snapshot:
         return cls.from_dict(json.loads(text))

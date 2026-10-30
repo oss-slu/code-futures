@@ -1,0 +1,88 @@
+# CI for Code Futures itself.
+#
+# Not the reusable workflow teams call -- that is a separate file and a
+# separate piece of work. This is the ordinary build for this repository.
+#
+# **These jobs block, and the reusable workflow we offer teams does not.**
+# That asymmetry is deliberate. Advisory-by-default protects a team whose
+# build would otherwise break on the day they adopt a quality tool, and a
+# team that learns the tools are an obstacle has learned the wrong thing. We
+# are the maintainers here, we chose these checks, and we accept them failing
+# the build. The guidebook's section 7 is about making that same choice.
+
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install ruff==0.14.2
+      - run: ruff check .
+      - run: ruff format --check .
+
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.11", "3.12", "3.13"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+      - run: pip install -e ".[dev]"
+      - run: pytest -q
+
+  self:
+    # Smoke test: run Code Futures against the checkout it is running inside.
+    #
+    # Unit tests exercise the collectors against hand-built fixtures, which
+    # means they only ever see shapes somebody thought of. This runs the real
+    # thing against a real repository, and it has already earned its place --
+    # the first self-run reported every tested module as untested, because
+    # `tests/test_render.py` was being matched by the stem `test_render`
+    # rather than `render`.
+    #
+    # No token and no network: structure comes from the checkout's own git
+    # history, capability detection from its files. That is the whole reason
+    # this can be a CI step rather than a scheduled job with a secret.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # Required. A shallow checkout has one commit, which would make
+          # every structural finding vacuous rather than absent. The command
+          # refuses to run rather than reporting from truncated history.
+          fetch-depth: 0
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - run: pip install -e .
+
+      - name: Report on this repository
+        run: code-futures self --output self-report.md
+
+      - name: Publish the report to the job summary
+        if: always()
+        run: cat self-report.md >> "$GITHUB_STEP_SUMMARY"
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: code-futures-self-report
+          path: self-report.md
