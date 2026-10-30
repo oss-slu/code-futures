@@ -4,13 +4,13 @@ Given a repository, say what state its engineering practice is in.
 
 Code Futures reads a codebase and reports on its **structure** — where complexity and churn concentrate, which files keep changing together, where a module boundary is leaking — and on the **practice** around it: linting, testing, review gates, dependency hygiene, open-source baseline.
 
-It produces a report per repository and a machine-readable snapshot. It knows nothing about courses, teams, or people.
+It produces a Markdown report per repository and a machine-readable snapshot. Everything it reports is about a codebase: no identities, no attribution, no ranking of one repository against another.
 
 ## On the name
 
-After Kent Beck's distinction in *Tidy First?* between the two kinds of value in software. **Features** are what it does now. **Futures** are what remains possible later.
+From Kent Beck's talk [*Features Versus Futures*](https://videos.itrevolution.com/watch/1183714411/) (2026). **Features** are what software does now. **Futures** are what remains possible later, and every feature spends some of them. The argument underneath — that structure creates options rather than value today — is developed in his *Tidy First?*.
 
-Not one probe here is a feature. A test suite, a branch gate, a linter, a licence — none of them do anything for a user today, and every one of them decides what you can still change next semester. That is also why they are so easy to postpone: nothing bad happens the week you skip them.
+Not one probe here is a feature. A test suite, a branch gate, a linter, a licence — none of them do anything for a user today, and every one decides what you can still change a year from now. That is also why they are easy to postpone indefinitely: nothing bad happens the week you skip them.
 
 **Companion guidebook**: [`oss-slu/guidebook_code_futures`](https://github.com/oss-slu/guidebook_code_futures) explains what each finding means, what it would be wrong to conclude, and what to do about it. Read that before acting on a report.
 
@@ -86,7 +86,7 @@ code-futures doctor                    # always run this first
 code-futures probe oss-slu/some-repo
 ```
 
-### Across a whole organisation
+### Across every repository in an organisation
 
 ```bash
 code-futures doctor
@@ -100,9 +100,9 @@ Budget real time. Scorecard takes one to two minutes per repository and the stru
 
 `sweep` refuses to run until `doctor` passes, and the reason is specific.
 
-`oss-slu` enforces SAML SSO. A token with correct scopes that has **not** been SSO-authorised returns 403 on every repository. Nothing about that looks like an authentication failure from the inside: every check comes back empty, every probe reports a gap, and the sweep renders as *every team failed everything*. The output is complete, plausible, and entirely wrong.
+Where an organisation enforces SAML SSO, a token with correct scopes that has **not** been SSO-authorised returns 403 on every repository. Nothing about that looks like an authentication failure from the inside: every check comes back empty, every probe reports a gap, and the sweep reads as though every repository failed everything. The output is complete, plausible, and entirely wrong.
 
-This has happened once already on a different pipeline. `doctor` exists so it cannot happen again silently.
+That has happened once already on a different pipeline, which is why `doctor` is a gate rather than advice.
 
 ---
 
@@ -132,7 +132,7 @@ Without a Sonar token, those probes report `unreadable` and every other section 
 
 ## Adding it to your repository's CI
 
-Add **one file**. This is what a team pastes:
+Add **one file** to the repository you want reported on:
 
 ```yaml
 # .github/workflows/code-futures.yml
@@ -157,7 +157,7 @@ jobs:
 
 **Copy the `permissions:` block exactly.** Omitting it is the most likely reason a first attempt fails. A reusable workflow cannot grant itself more permission than the workflow calling it, so `security-events: write` must be declared *in your repository*. Without it the security scanning job fails, and the error does not obviously point back here.
 
-**Nothing will fail your build.** Every job is advisory. A team whose build breaks the day they adopt a quality tool learns that quality tools are an obstacle, and they would not be wrong to conclude that. Making a check blocking is your decision — section 7 of the guidebook covers what it costs.
+**Nothing will fail your build.** Every job is advisory, and that is deliberate rather than timid: a build that breaks the day you adopt a quality tool teaches you that quality tools are an obstacle. Making a check blocking is a later decision, and section 7 of the guidebook covers what it costs.
 
 **There is no stack to declare.** Each job looks for its own manifest and skips when it finds none. A repository that is Python *and* React gets both toolchains rather than having to pick one.
 
@@ -177,9 +177,9 @@ jobs:
 
 ### What it does *not* do
 
-**It does not produce a report in CI.** It writes an artifact of facts, every one already derivable by anyone who can clone your repository. The composed report — with what findings mean and what to do about them — is assembled outside CI and reaches your tech lead.
+**It does not produce a report in CI.** It writes an artifact of facts, every one already derivable by anyone who can clone the repository. The composed report — what the findings mean and what to do about them — is assembled outside CI.
 
-That distinction is why the last job is called `summarize` rather than `report`. CI output on a public repository is public: logs and job summaries are readable with no account. Keeping the renderer out of that path is the mechanism, not a policy.
+That is why the last job is called `summarize` rather than `report`. CI output on a public repository is public: logs and job summaries are readable with no account. If you assemble reports that are not meant to be published, keeping the renderer out of the CI path is the mechanism that stops it happening by accident.
 
 ---
 
@@ -201,7 +201,7 @@ Complexity is approximated by indentation depth rather than parsed per language.
 
 ### Capability detection, in two sources
 
-Manifests say what is *configured*. Workflow files say what is *enforced*. These are consulted as a **union, not a hierarchy** — a tool can be enforced without being configured, and six repositories in this organisation set up a linter entirely inside a workflow with no config file anywhere.
+Manifests say what is *configured*. Workflow files say what is *enforced*. These are consulted as a **union, not a hierarchy** — a tool can be enforced without being configured. In a survey of 96 repositories, six set up a linter entirely inside a workflow with every rule as a command-line flag and no config file anywhere.
 
 ### Measurements, not scores
 
@@ -232,7 +232,7 @@ python -m venv .venv && .venv/bin/pip install -e ".[dev]"
 | `observe.py` | What a CI run watched happen |
 | `render.py` | Report to Markdown. Never called from CI |
 
-**Reports are rendered from deterministic templates, not generated by a model.** Four reasons: a false statement in a team-facing document is something a team has to argue with, and a template is reviewed once rather than once per repository; comparability needs identical phrasing; the CI path has no model access; and the same snapshot produces the same bytes, so a report diffs against its own past.
+**Reports are rendered from deterministic templates, not generated by a model.** Four reasons: a false statement in a document somebody reads about their own work is something they have to argue with, and a template is reviewed once rather than once per repository; comparing two reports needs identical phrasing for the same finding; the CI path has no model access; and the same snapshot produces the same bytes, so a report diffs against its own past.
 
 Changing wording in `strings.py` changes every report. That is the point.
 
@@ -245,7 +245,7 @@ PyYAML, to read the orchestration tooling's practice snapshot. Everything else i
 ### Known gaps
 
 - **Vendored upstream source is not detected.** No path convention distinguishes it, and guessing risks excluding real source, which is the worse error.
-- **Several config markers are unexercised.** Checkstyle, PMD, SpotBugs, Spotless, JaCoCo, tarpaulin and cargo-mutants match nothing in this organisation. Kept for portability.
+- **Several config markers are unexercised.** Checkstyle, PMD, SpotBugs, Spotless, JaCoCo, tarpaulin and cargo-mutants matched nothing in the repositories this was first built against. Kept for portability, and untested until something fires them.
 - **`structure.duplication` and `structure.complexity` need SonarQube.** They report `unreadable` without it.
 
 ---
