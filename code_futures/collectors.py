@@ -168,7 +168,10 @@ def from_practice_snapshot(entry: dict) -> list[ProbeResult]:
             ProbeResult(
                 id="ci.present",
                 outcome=Outcome.ENFORCED,
-                attributes={"count": str(len(wf)), "workflows": ", ".join(f"`{w}`" for w in wf[:6])},
+                attributes={
+                    "count": str(len(wf)),
+                    "workflows": ", ".join(f"`{w}`" for w in wf[:6]),
+                },
                 source="practice-snapshot",
             )
         )

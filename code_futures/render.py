@@ -58,6 +58,14 @@ def _detail(r: ProbeResult) -> str:
     if template is None:
         return S.GENERIC[r.outcome]
     slots = {"tool": r.tool or "", **{k: v for k, v in r.attributes.items() if v is not None}}
+    # Derive the plural marker rather than requiring every collector to
+    # supply it. A missing slot falls back to the generic wording, so an
+    # omission here would quietly degrade a finding rather than fail.
+    if "{s}" in template and "s" not in slots:
+        try:
+            slots["s"] = "" if int(slots.get("count", 0)) == 1 else "s"
+        except (TypeError, ValueError):
+            slots["s"] = "s"
     try:
         return template.format(**slots)
     except KeyError:
