@@ -16,7 +16,9 @@ import json
 import subprocess
 from pathlib import Path
 
-from . import detect, github
+import re
+
+from . import detect, github, structure
 from .config import Config
 from .schema import Outcome, ProbeResult
 
@@ -441,3 +443,108 @@ def _sonar_get(url: str, cfg: Config) -> dict | None:
             return json.loads(r.read().decode())
     except (urllib.error.URLError, json.JSONDecodeError, OSError):
         return None
+
+
+# --- Structure -------------------------------------------------------------
+
+_STRUCTURE_PROBES = (
+    "structure.hotspots", "structure.change_coupling", "structure.untested_modules",
+    "structure.duplication", "structure.complexity",
+)
+
+# A source file is considered covered when a file with a matching stem exists
+# under a test-looking path. Crude, and deliberately so: a precise mapping
+# needs per-framework knowledge, and the finding here is "nothing anywhere
+# names this module", which the crude version gets right.
+_TEST_PATH = re.compile(r"(^|/)(tests?|__tests__|spec)(/|$)|(^|/)test_|_test\.|\.test\.|\.spec\.", re.I)
+
+
+def structural(repository: str, paths: list[str] | None) -> list[ProbeResult]:
+    """Hotspots, change coupling, and untested modules, from git history.
+
+    The only collector that looks at the code rather than the process around
+    it. Everything here is computed from `git log` plus the files it names,
+    with no external service and nothing to onboard.
+    """
+    report = structure.analyse(repository, lambda p: github.file(repository, p))
+
+    if report.unreadable:
+        return [
+            ProbeResult(id=pid, outcome=Outcome.UNREADABLE,
+                        attributes={"reason": report.unreadable}, source="structure")
+            for pid in _STRUCTURE_PROBES
+        ]
+
+    out: list[ProbeResult] = []
+
+    if report.hotspots:
+        top = report.hotspots[0]
+        out.append(ProbeResult(
+            id="structure.hotspots", outcome=Outcome.PRESENT,
+            attributes={
+                "count": str(len(report.hotspots)), "top": top.path,
+                "top_changes": str(top.changes), "top_complexity": str(top.complexity),
+                "thin": "true" if report.thin_history else "false",
+                "commits": str(report.commits),
+            },
+            evidence=[h.path for h in report.hotspots], source="structure",
+        ))
+    else:
+        out.append(ProbeResult(id="structure.hotspots", outcome=Outcome.ABSENT, source="structure"))
+
+    if report.coupled:
+        best = report.coupled[0]
+        out.append(ProbeResult(
+            id="structure.change_coupling", outcome=Outcome.PRESENT,
+            attributes={
+                "count": str(len(report.coupled)),
+                "threshold": str(int(structure.COUPLING_THRESHOLD * 100)),
+                "a": best.a, "b": best.b,
+                "degree": str(round(best.degree * 100)), "together": str(best.together),
+            },
+            evidence=[f"{p.a} <-> {p.b} ({round(p.degree * 100)}%)" for p in report.coupled],
+            source="structure",
+        ))
+    else:
+        out.append(ProbeResult(id="structure.change_coupling", outcome=Outcome.ABSENT, source="structure"))
+
+    # Untested modules, restricted to files that actually churn. A stable file
+    # with no test is a much weaker finding than a file changing every week
+    # with no test, and reporting both flattens the one worth acting on.
+    if paths is None:
+        out.append(ProbeResult(
+            id="structure.untested_modules", outcome=Outcome.UNREADABLE,
+            attributes={"reason": "The repository tree could not be read."}, source="structure",
+        ))
+    else:
+        stems = {
+            p.rsplit("/", 1)[-1].split(".")[0].lower()
+            for p in paths if _TEST_PATH.search(p)
+        }
+        bare = []
+        for path, _changes in report.churn.most_common(40):
+            if _TEST_PATH.search(path) or detect.is_vendored(path):
+                continue
+            if not path.endswith((".py", ".js", ".ts", ".jsx", ".tsx", ".java", ".rs", ".kt")):
+                continue
+            stem = path.rsplit("/", 1)[-1].split(".")[0].lower()
+            if stem not in stems:
+                bare.append(path)
+        if bare:
+            out.append(ProbeResult(
+                id="structure.untested_modules", outcome=Outcome.PRESENT,
+                attributes={"count": str(len(bare))}, evidence=bare[:10], source="structure",
+            ))
+        else:
+            out.append(ProbeResult(id="structure.untested_modules", outcome=Outcome.ABSENT, source="structure"))
+
+    # Duplication and cognitive complexity come from SonarQube Cloud, which
+    # measures both properly. Reported as unreadable rather than absent when
+    # no Sonar project exists, because we did not establish them.
+    for pid in ("structure.duplication", "structure.complexity"):
+        out.append(ProbeResult(
+            id=pid, outcome=Outcome.UNREADABLE,
+            attributes={"reason": "SonarQube Cloud supplies this measurement, and no analysis was read."},
+            source="structure",
+        ))
+    return out

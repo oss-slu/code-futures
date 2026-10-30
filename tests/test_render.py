@@ -193,3 +193,87 @@ class TestWorkedExample:
 
     def test_example_names_no_real_repository(self):
         assert fixture.REPOSITORY == "oss-slu/tidewater-atlas"
+
+
+class TestStructure:
+    """The section about the code rather than the process around it."""
+
+    def test_coupling_names_the_files(self):
+        """A coupled pair a team cannot see is a statistic. One they can see
+        is a conversation about where a boundary belongs."""
+        r = ProbeResult(
+            "structure.change_coupling", Outcome.PRESENT,
+            attributes={"count": "2", "threshold": "60", "a": "models.py",
+                        "b": "routes.py", "degree": "83", "together": "24"},
+            evidence=["models.py <-> routes.py (83%)"],
+        )
+        out = render(_report([r]))
+        assert "models.py <-> routes.py (83%)" in out
+        assert "Reading change coupling" in out
+
+    def test_thin_history_is_flagged(self):
+        """A young repository reports that recently-written files were
+        recently written, and the report should say so."""
+        r = ProbeResult(
+            "structure.hotspots", Outcome.PRESENT,
+            attributes={"count": "2", "top": "a.py", "top_changes": "4",
+                        "top_complexity": "90", "thin": "true", "commits": "18"},
+        )
+        out = render(_report([r]))
+        assert "This repository is young" in out
+        assert "18 commits" in out
+
+    def test_long_history_is_not_flagged(self):
+        r = ProbeResult(
+            "structure.hotspots", Outcome.PRESENT,
+            attributes={"count": "2", "top": "a.py", "top_changes": "60",
+                        "top_complexity": "400", "thin": "false", "commits": "300"},
+        )
+        assert "This repository is young" not in render(_report([r]))
+
+    def test_structure_probes_cannot_be_enforced(self):
+        """Nothing in CI runs change coupling."""
+        with pytest.raises(ValueError, match="cannot be enforced"):
+            ProbeResult("structure.change_coupling", Outcome.ENFORCED)
+
+
+class TestRemediationTriggers:
+    """`when` replaced a hard-coded whitelist that dropped findings twice."""
+
+    def test_every_remediation_declares_reachable_outcomes(self):
+        from code_futures.schema import PROBES_BY_ID
+
+        for pid, spec in S.REMEDIATION.items():
+            assert pid in PROBES_BY_ID, f"{pid} is not a probe"
+            top = PROBES_BY_ID[pid].top_rung
+            for value in spec.get("when", ("absent",)):
+                outcome = Outcome(value)
+                assert outcome is not Outcome.UNREADABLE, (
+                    f"{pid}: acting on an unreadable finding means acting on our own failure"
+                )
+                if outcome is Outcome.ENFORCED:
+                    assert top is Outcome.ENFORCED, f"{pid} can never be enforced"
+
+    def test_known_vulnerabilities_are_actionable_while_present(self):
+        r = ProbeResult("deps.known_vulnerabilities", Outcome.PRESENT, attributes={"count": "3"})
+        assert "dependencies with known advisories" in render(_report([r]))
+
+    def test_untested_modules_are_actionable_while_present(self):
+        """As the only finding it becomes the lead, which uses `label`.
+        Ranked below something else it becomes a numbered `step`."""
+        r = ProbeResult("structure.untested_modules", Outcome.PRESENT, attributes={"count": "3"})
+        assert "a test for the module that changes most often" in render(_report([r]))
+
+    def test_ranked_below_another_finding_it_becomes_a_step(self):
+        results = [
+            ProbeResult("structure.untested_modules", Outcome.PRESENT, attributes={"count": "3"}),
+            ProbeResult("deps.known_vulnerabilities", Outcome.PRESENT, attributes={"count": "2"}),
+        ]
+        out = render(_report(results))
+        assert "Our suggestion here is **the dependencies with known advisories**" in out
+        assert "most frequently changed untested file" in out
+
+    def test_identified_licence_is_not_actionable(self):
+        r = ProbeResult("practice.license", Outcome.PRESENT,
+                        attributes={"path": "LICENSE", "spdx": "MIT"})
+        assert S.WHERE_TO_START_NOTHING in render(_report([r]))

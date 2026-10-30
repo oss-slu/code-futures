@@ -36,24 +36,67 @@ The companion guidebook explains each probe and the limits of what it shows. Rea
 
 | Outcome    | Count |
 | ---------- | ----- |
-| enforced   | 8     |
-| present    | 8     |
+| enforced   | 9     |
+| present    | 15    |
 | absent     | 8     |
 | unreadable | 1     |
 
-### **No score**
+### **Measurements, not a score**
 
-Use these counts as an index to find your place. Each probe reports on one practice, and the practices a project needs depend on what it is for. Two repositories with different totals may simply be doing different work.
+This report carries numbers, and reading them well is most of what the guidebook is for. A measurement is data: 62% of lines executed, four files changing together, 340 points of cognitive complexity. A score is data collapsed into a judgement about whether you are doing well. The numbers here are the first kind, and nothing in this report performs the collapse.
 
-25 findings from 23 probes, because `lint` and `format` are answered once per language.
+Two numbers are deliberately absent. We do not publish the OpenSSF Scorecard's 0–10 aggregate, because it is calibrated for widely-depended-upon libraries and measures a population your project is not in — a validity problem rather than an objection to numbers. And we do not carry SonarQube's A–E maintainability letter, because a letter *is* a collapse into judgement; the underlying debt measurement it derives from appears instead.
+
+Use the outcome counts as an index to find your place. Each probe reports on one practice, and the practices a project needs depend on what it is for.
+
+33 findings from 31 probes, because `lint` and `format` are answered once per language.
 
 ---
 
-## **1. Open Source Baseline**
+## **1. Structure**
+
+What the shape of this codebase looks like, measured from its own history. This is the only section about the code rather than the process around it.
+
+* **`structure.hotspots`** — **present**. 4 files where change frequency and complexity both concentrate. Top: `api/services/sync.py`, changed 67 times, complexity 412.
+    * `api/services/sync.py`
+    * `api/models/survey.py`
+    * `web/src/Dashboard.jsx`
+    * `api/routes/upload.py`
+* **`structure.change_coupling`** — **present**. 3 file pairs change together in more than 60% of the commits touching either. Strongest: `api/models/survey.py` and `api/routes/upload.py`, 83% across 24 commits.
+    * api/models/survey.py <-> api/routes/upload.py (83%)
+    * api/services/sync.py <-> web/src/Dashboard.jsx (71%)
+    * api/models/survey.py <-> web/src/SurveyForm.jsx (64%)
+* **`structure.untested_modules`** — **present**. 3 frequently-changed source files have no corresponding test file.
+    * `api/services/sync.py`
+    * `api/routes/upload.py`
+    * `web/src/Dashboard.jsx`
+* **`structure.duplication`** — **present**. 7.4% of lines are duplicated, across 18 blocks.
+* **`structure.complexity`** — **present**. 1840 points of cognitive complexity across 63 files. Highest: `api/services/sync.py` at 412.
+
+### **Reading a hotspot**
+
+A hotspot is complexity multiplied by change frequency. Complicated code nobody touches is cheap, and simple code that changes constantly is cheap. The intersection is expensive, and it is where your next defect is most likely to appear.
+
+Complexity here is approximated by indentation depth rather than parsed per language, which is an approximation and works the same way across every language in the portfolio. Treat the ranking as a direction to look, not a measurement of quality.
+
+A hotspot with no tests is the combination worth acting on first: the code most likely to break, with the least protection while you change it.
+
+### **Reading change coupling**
+
+Two files that keep changing together are coupled, whether or not either imports the other. This is Kent Beck's definition made measurable: coupling is the probability that changing one thing forces you to change another, and your history records how often that actually happened.
+
+A static analyser cannot see this. A test file changing with the module it tests is coupling working as intended. A route handler that changes every time a database model changes is a boundary in the wrong place, and it will keep costing you until it moves.
+
+The question to ask of each pair is whether the relationship is one you would choose. Where the answer is no, that is where a refactor pays for itself.
+
+---
+
+## **2. Open Source Baseline**
 
 Whether the repository carries what an outside contributor needs. Someone who has never met you should be able to understand the project and open a pull request without asking a person first.
 
 * **`practice.readme`** — **present**. `README.md`
+* **`practice.readme_sections`** — **present**. Covers two of four expected sections. Missing: Installation, Project Structure.
 * **`practice.contributing`** — **present**. `CONTRIBUTING.md`
 * **`practice.code_of_conduct`** — **absent**. Searched the root, `docs/`, and `.github/`.
 * **`practice.license`** — **present**. `LICENSE` exists. Its text matches no OSI-approved licence we recognise, so no SPDX identifier was assigned.
@@ -67,7 +110,7 @@ An unrecognisable licence file is a different finding from a missing one. Someon
 
 ---
 
-## **2. Linting and Formatting**
+## **3. Linting and Formatting**
 
 Whether a tool checks style and common errors, and whether anything makes that check run.
 
@@ -84,7 +127,7 @@ This repository is JavaScript and Python, so each language gets its own row. The
 
 ---
 
-## **3. Testing**
+## **4. Testing**
 
 Which kinds of testing this project runs.
 
@@ -106,12 +149,21 @@ Three of five kinds are absent here, which may well be right for a project at th
 
 ---
 
-## **4. Review and Integration**
+## **5. Review and Integration**
 
 Whether code is reviewed before merging, and whether anything runs against it.
 
 * **`review.required`** — **present**. `main` is protected. Required approving reviews: 0. Status checks: not required. Administrators: exempt.
+* **`review.practiced`** — **enforced**. 18 of the last 20 merged pull requests carried an approving review.
 * **`ci.present`** — **enforced**. 3 workflows: `CI`, `CodeQL`, `Dependabot Updates`.
+
+### **Policy and practice disagree**
+
+The rule on the default branch and what actually happens are not the same thing here, and the two probes above measure different things on purpose.
+
+Required review proves a review was *requested*. It cannot tell whether anyone read the diff: an approval nine seconds after a pull request opens counts identically to a careful read. Equally, a repository that requires nothing can still review every change well.
+
+Only your team knows which of these you are. The numbers point at the question.
 
 ### **Protection that permits unreviewed merges**
 
@@ -123,7 +175,7 @@ Whoever holds admin on this repository bypasses the rules above. On a small team
 
 ---
 
-## **5. Security and Dependencies**
+## **6. Security and Dependencies**
 
 Whether the project guards against known classes of problem, and keeps its dependencies current.
 
@@ -131,6 +183,7 @@ Whether the project guards against known classes of problem, and keeps its depen
 * **`security.token_permissions`** — **absent**. Workflows declare no top-level `permissions:` block, so jobs run with the repository default.
 * **`security.workflow_safety`** — **enforced**. No dangerous workflow patterns detected.
 * **`deps.update_tool`** — **enforced**. Dependabot at `.github/dependabot.yml`.
+* **`deps.known_vulnerabilities`** — **present**. 3 dependencies carry known advisories.
 
 ### **An unreadable probe describes us**
 
@@ -140,7 +193,7 @@ If an outcome in your report reads **unreadable** and you believe it is wrong, t
 
 ---
 
-## **6. Code Quality Analysis**
+## **7. Code Quality Analysis**
 
 What continuous static analysis reports. This section carries no grade: it records whether the analysis runs and whether anyone has acted on what it flags.
 
@@ -166,7 +219,7 @@ SonarQube Cloud publishes analysis of public repositories on sonarcloud.io, wher
 | --------------- | --------------------------------------------- |
 | `security.sast` | The Scorecard SAST check exceeded its timeout |
 
-1 of 23 probes. A long list here, or a complete one, would mean the sweep failed rather than the repository being empty.
+1 of 31 probes. A long list here, or a complete one, would mean the sweep failed rather than the repository being empty.
 
 ---
 
@@ -174,17 +227,16 @@ SonarQube Cloud publishes analysis of public repositories on sonarcloud.io, wher
 
 Pick one item. A team that picks six finishes none, because each competes with feature work that has a client attached. A team that picks one finishes it and picks another. §5 of the guidebook makes the argument properly.
 
-Our suggestion here is **the licence**:
+Our suggestion here is **the dependencies with known advisories**:
 
-* Ten minutes, no design decisions, no coordination
-* The only finding with consequences outside the team — a contributor cannot tell whether they may use this
-* Entirely within the team's control, which is not true of everything below
+* Each one is a published vulnerability in code you ship
+* Usually a version bump rather than a change you have to design
 
 Then, in order:
 
-1. **Run `eslint` in CI.** The configuration exists; this adds a step that invokes it. Expect many findings on first run — the guidebook covers landing a linter without a hundred-file diff.
-2. **Review the open security hotspots.** Decide whether the context makes each one safe and record the decision. Most will be fine; the record is what makes that visible next time.
-3. **Wire `pytest-cov` into CI.** The dependency is already declared. Read the resulting number as a map of what is untested rather than as a target.
+1. **Add an identifiable licence.** Copy verbatim text from [choosealicense.com](https://choosealicense.com).
+2. **Fill in the missing README sections.** Overview, Tech Stack, Installation, and Project Structure are what a reader arriving cold needs.
+3. **Run `eslint` in CI.** The configuration exists; this adds a step that invokes it. Expect many findings on first run — the guidebook covers landing a linter without a hundred-file diff.
 
 Every item here is a future rather than a feature. None will be visible to a user, which is why they are easy to postpone, and why naming them is worth doing.
 

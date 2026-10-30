@@ -74,6 +74,7 @@ def _build(repository: str, cfg, practice: dict | None) -> RepositoryReport:
 
     caps, languages = collectors.capabilities(repository)
     results += caps
+    results += collectors.structural(repository, github.tree(repository))
     results += collectors.scorecard(repository, cfg)
     results += collectors.sonar(repository, cfg)
 

@@ -24,9 +24,38 @@ REPOSITORY = "oss-slu/tidewater-atlas"
 
 def build() -> RepositoryReport:
     results = [
+        # Structure. The section the report leads with, and the only one about
+        # the code rather than the process around it.
+        P("structure.hotspots", O.PRESENT,
+          attributes={"count": "4", "top": "api/services/sync.py", "top_changes": "67",
+                      "top_complexity": "412", "thin": "false", "commits": "214"},
+          evidence=["api/services/sync.py", "api/models/survey.py", "web/src/Dashboard.jsx",
+                    "api/routes/upload.py"],
+          source="structure"),
+        P("structure.change_coupling", O.PRESENT,
+          attributes={"count": "3", "threshold": "60", "a": "api/models/survey.py",
+                      "b": "api/routes/upload.py", "degree": "83", "together": "24"},
+          evidence=["api/models/survey.py <-> api/routes/upload.py (83%)",
+                    "api/services/sync.py <-> web/src/Dashboard.jsx (71%)",
+                    "api/models/survey.py <-> web/src/SurveyForm.jsx (64%)"],
+          source="structure"),
+        P("structure.untested_modules", O.PRESENT,
+          attributes={"count": "3"},
+          evidence=["api/services/sync.py", "api/routes/upload.py", "web/src/Dashboard.jsx"],
+          source="structure"),
+        P("structure.duplication", O.PRESENT,
+          attributes={"density": "7.4", "blocks": "18"}, source="sonar"),
+        P("structure.complexity", O.PRESENT,
+          attributes={"total": "1840", "files": "63", "top": "api/services/sync.py",
+                      "top_value": "412"},
+          source="sonar"),
+
         # Baseline. Licence is `present` with a null SPDX id, which is the
         # upstream `unrecognised` state and triggers its own note.
         P("practice.readme", O.PRESENT, attributes={"path": "README.md"}, source="practice-snapshot"),
+        P("practice.readme_sections", O.PRESENT,
+          attributes={"found": "two", "missing": "Installation, Project Structure"},
+          source="capability"),
         P("practice.contributing", O.PRESENT, attributes={"path": "CONTRIBUTING.md"}, source="practice-snapshot"),
         P("practice.code_of_conduct", O.ABSENT, source="practice-snapshot"),
         P("practice.license", O.PRESENT, attributes={"path": "LICENSE", "spdx": None},
@@ -64,6 +93,10 @@ def build() -> RepositoryReport:
         P("review.required", O.PRESENT,
           attributes={"branch": "main", "reviews": "0", "status_checks": "not required", "admins": "exempt"},
           source="practice-snapshot"),
+        # Policy says nothing is required; practice shows most changes were
+        # reviewed anyway. The disagreement is the finding.
+        P("review.practiced", O.ENFORCED,
+          attributes={"reviewed": "18", "total": "20"}, source="scorecard"),
         P("ci.present", O.ENFORCED,
           attributes={"count": "3", "workflows": "`CI`, `CodeQL`, `Dependabot Updates`"},
           source="practice-snapshot"),
@@ -75,6 +108,8 @@ def build() -> RepositoryReport:
         P("security.workflow_safety", O.ENFORCED, source="scorecard"),
         P("deps.update_tool", O.ENFORCED, tool="Dependabot",
           attributes={"config": ".github/dependabot.yml"}, source="scorecard"),
+        P("deps.known_vulnerabilities", O.PRESENT,
+          attributes={"count": "3"}, source="scorecard"),
 
         # Sonar, with hotspots outstanding so the teaching note appears.
         P("quality.project", O.ENFORCED,

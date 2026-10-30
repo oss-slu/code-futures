@@ -87,6 +87,7 @@ class Section(str, Enum):
     a different document, where an explicit "nothing found" is comparable.
     """
 
+    STRUCTURE = "Structure"
     BASELINE = "Open Source Baseline"
     LINT = "Linting and Formatting"
     TEST = "Testing"
@@ -122,17 +123,41 @@ class Probe:
     """
 
 
-# The probe spine. Twenty probes, five sections, fixed order.
+# The probe spine. Seven sections, fixed order, Structure first.
 #
 # Deliberately not configurable. A per-repository probe set would make reports
 # incomparable, which is the one property the delivery design depends on.
 PROBES: tuple[Probe, ...] = (
+    # --- Structure -------------------------------------------------------
+    # First, because it is the only section about the code rather than the
+    # process around it, and because a team that reads one section should
+    # read this one.
+    #
+    # These probes break the `enforced`/`present` pattern: nothing in CI
+    # "runs" change coupling, so their top rung is `present`, meaning the
+    # analysis produced a finding. `absent` means it ran and found nothing
+    # worth reporting, which is a genuinely good result rather than a gap.
+    Probe("structure.hotspots", Section.STRUCTURE,
+          "Where do complexity and change frequency concentrate?", top_rung=Outcome.PRESENT),
+    Probe("structure.change_coupling", Section.STRUCTURE,
+          "Which files keep changing together?", top_rung=Outcome.PRESENT),
+    Probe("structure.untested_modules", Section.STRUCTURE,
+          "Which frequently-changed modules have no tests?", top_rung=Outcome.PRESENT),
+    Probe("structure.duplication", Section.STRUCTURE,
+          "How much logic is duplicated?", top_rung=Outcome.PRESENT),
+    Probe("structure.complexity", Section.STRUCTURE,
+          "Which files carry the most cognitive complexity?", top_rung=Outcome.PRESENT),
     # --- Open Source Baseline -------------------------------------------
     # Sourced from the orchestration tooling's practice snapshot rather than
     # recollected. Its collector is tested, current, and already handles the
     # unreadable case; reimplementing it here would be a second thing to be
     # wrong. Ownership should move once the probe set settles.
     Probe("practice.readme", Section.BASELINE, "Is there a README?", top_rung=Outcome.PRESENT),
+    # The program's conventions require a README covering Overview, Tech
+    # Stack, Installation and Project Structure. Checking only that the file
+    # exists tests nothing a team cares about; opening it is nearly free.
+    Probe("practice.readme_sections", Section.BASELINE,
+          "Does the README cover the four expected sections?", top_rung=Outcome.PRESENT),
     Probe("practice.contributing", Section.BASELINE, "Is there a contributing guide?", top_rung=Outcome.PRESENT),
     Probe("practice.code_of_conduct", Section.BASELINE, "Is there a code of conduct?", top_rung=Outcome.PRESENT),
     Probe("practice.license", Section.BASELINE, "Is there a licence, and is it identifiable?", top_rung=Outcome.PRESENT),
@@ -150,12 +175,24 @@ PROBES: tuple[Probe, ...] = (
     Probe("test.mutation", Section.TEST, "Is there mutation testing?"),
     # --- Review and Integration ------------------------------------------
     Probe("review.required", Section.REVIEW, "Does the default branch require an approving review?"),
+    # The companion to the probe above, and the more interesting of the two.
+    # `review.required` says whether the rule exists; this says whether review
+    # actually happens. A repository can require review and merge everything
+    # through an approval nobody read, and it can require nothing while
+    # reviewing every change carefully. The gap between policy and practice is
+    # the teachable finding, and dropping this as "scalar" lost it.
+    Probe("review.practiced", Section.REVIEW, "Do recent changes actually arrive through review?"),
     Probe("ci.present", Section.REVIEW, "Does any CI workflow run?"),
     # --- Security and Dependencies ----------------------------------------
     Probe("security.sast", Section.SECURITY, "Does static application security testing run?"),
     Probe("security.token_permissions", Section.SECURITY, "Do workflows declare minimal permissions?"),
     Probe("security.workflow_safety", Section.SECURITY, "Are workflows free of dangerous patterns?"),
     Probe("deps.update_tool", Section.SECURITY, "Is a dependency update tool configured and working?"),
+    # Recovered after being dropped as "inverted". A count of dependencies
+    # with known advisories is data a team can act on this afternoon, and
+    # withholding it because the probe reads backwards was the wrong trade.
+    Probe("deps.known_vulnerabilities", Section.SECURITY,
+          "Do any dependencies carry known advisories?", top_rung=Outcome.PRESENT),
     # --- Code Quality Analysis (SonarQube Cloud) --------------------------
     # Its own section rather than folded into security, because what Sonar
     # contributes here is mostly not SAST. CodeQL does the heavier semantic

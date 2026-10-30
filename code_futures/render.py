@@ -90,7 +90,17 @@ def _section_body(report: RepositoryReport, section: Section) -> str:
             cells += [f"**{r.outcome.value}**", _detail(r)]
             rows.append(cells)
         return _table(rows)
-    return "\n".join(f"* **{_label(r)}** — **{r.outcome.value}**. {_detail(r)}" for r in results)
+    lines = []
+    for r in results:
+        lines.append(f"* **{_label(r)}** — **{r.outcome.value}**. {_detail(r)}")
+        # Structural findings are only actionable with the files named, so
+        # their evidence is shown rather than kept in the snapshot. A coupled
+        # pair a team cannot see is a statistic; one they can see is a
+        # conversation about where a boundary belongs.
+        if section is Section.STRUCTURE and r.outcome is Outcome.PRESENT and r.evidence:
+            for item in r.evidence[:6]:
+                lines.append(f"    * `{item}`" if "<->" not in item else f"    * {item}")
+    return "\n".join(lines)
 
 
 def _notes(report: RepositoryReport, section: Section) -> list[str]:
@@ -101,6 +111,25 @@ def _notes(report: RepositoryReport, section: Section) -> list[str]:
     """
     out: list[str] = []
     got = {r.key: r for r in report.by_section(section)}
+
+    if section is Section.STRUCTURE:
+        hs = got.get(("structure.hotspots", None))
+        if hs and hs.outcome is Outcome.PRESENT:
+            if hs.attributes.get("thin") == "true":
+                out.append(S.NOTE_THIN_HISTORY.format(commits=hs.attributes.get("commits", "Few")))
+            out.append(S.NOTE_HOTSPOT)
+        cp = got.get(("structure.change_coupling", None))
+        if cp and cp.outcome is Outcome.PRESENT:
+            out.append(S.NOTE_COUPLING)
+
+    if section is Section.REVIEW:
+        req = got.get(("review.required", None))
+        prac = got.get(("review.practiced", None))
+        # The interesting case is disagreement between the rule and what
+        # actually happens, in either direction.
+        if req and prac and req.outcome is not Outcome.UNREADABLE and prac.outcome is not Outcome.UNREADABLE:
+            if req.outcome != prac.outcome:
+                out.append(S.NOTE_POLICY_VS_PRACTICE)
 
     if section is Section.BASELINE:
         lic = got.get(("practice.license", None))
@@ -202,22 +231,16 @@ def _where_to_start(report: RepositoryReport) -> str:
     """
     actionable = []
     for r in report.results:
-        act = r.outcome is Outcome.ABSENT
-        # A capability that is configured and never run is the cheapest real
-        # improvement available, so it belongs on this list.
-        act = act or (r.outcome is Outcome.PRESENT and r.id in _CAPABILITY)
-        # A licence file matching no OSI licence is `present` and very much
-        # actionable. Omitting it dropped the one finding with consequences
-        # outside the team off the list entirely.
-        act = act or (r.id == "practice.license" and r.outcome is Outcome.PRESENT
-                      and not r.attributes.get("spdx"))
-        # Hotspots awaiting review are questions nobody has answered yet.
-        act = act or (r.id == "quality.hotspots_reviewed" and r.outcome is Outcome.PRESENT)
-        if not act:
-            continue
         spec = S.REMEDIATION.get(r.id)
-        if spec:
-            actionable.append((spec["rank"], r, spec))
+        if not spec:
+            continue
+        if r.outcome.value not in spec.get("when", ("absent",)):
+            continue
+        # An identified licence is `present` and needs nothing. Only the
+        # unidentifiable case is actionable.
+        if r.id == "practice.license" and r.attributes.get("spdx"):
+            continue
+        actionable.append((spec["rank"], r, spec))
     actionable.sort(key=lambda t: (t[0], t[1].language or ""))
 
     parts = [S.WHERE_TO_START_INTRO, ""]
