@@ -1,0 +1,67 @@
+cff-version: 1.2.0
+title: "Code Futures"
+message: "If you use this software, please cite it as below."
+type: software
+abstract: >-
+  Given a repository, say what state its engineering practice is in. Code
+  Futures reports on code structure — where complexity and churn concentrate,
+  which files keep changing together, where a module boundary is leaking — and
+  on the practice around it: linting, testing, review gates, dependency
+  hygiene, and the open-source baseline. It produces a report per repository
+  and a machine-readable snapshot, and knows nothing about courses, teams, or
+  people. The name follows Kent Beck's framing of features, which are what
+  software does now, against futures, which are what remains possible later.
+authors:
+  - given-names: Daniel
+    family-names: Shown
+    orcid: "https://orcid.org/0009-0002-5716-8835"
+    affiliation: Saint Louis University
+repository-code: "https://github.com/oss-slu/code-futures"
+url: "https://github.com/oss-slu/code-futures"
+license: MIT
+version: 1.0.0
+date-released: "2026-10-30"
+keywords:
+  - static analysis
+  - software quality
+  - technical debt
+  - change coupling
+  - computing education
+  - open source program office
+references:
+  - type: book
+    title: "Tidy First? A Personal Exercise in Empirical Software Design"
+    authors:
+      - given-names: Kent
+        family-names: Beck
+    publisher:
+      name: O'Reilly Media
+    year: 2023
+    isbn: "9781098151249"
+    notes: >-
+      Source of the coupling and cohesion definitions the structural analysis
+      measures, of the cost argument behind the blast-radius finding, and of
+      the question the tidy-first finding answers.
+  - type: speech
+    title: "Features Versus Futures"
+    authors:
+      - given-names: Kent
+        family-names: Beck
+    year: 2026
+    url: "https://videos.itrevolution.com/watch/1183714411/"
+    notes: >-
+      Source of the features-versus-futures framing the tool is named for.
+      The underlying argument, that structure creates options rather than
+      value today, is developed in Tidy First?.
+  - type: book
+    title: "Your Code as a Crime Scene"
+    authors:
+      - given-names: Adam
+        family-names: Tornhill
+    publisher:
+      name: Pragmatic Bookshelf
+    year: 2015
+    isbn: "9781680500387"
+    notes: >-
+      Source of the hotspot and change-coupling techniques computed from git
+      history, and of the indentation-based complexity proxy.

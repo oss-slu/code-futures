@@ -1,0 +1,91 @@
+{
+  "@context": "https://doi.org/10.5063/schema/codemeta-2.0",
+  "@type": "SoftwareSourceCode",
+  "name": "Code Futures",
+  "description": "Given a repository, say what state its engineering practice is in. Reports on code structure — where complexity and churn concentrate, which files keep changing together, where a module boundary is leaking — and on the practice around it: linting, testing, review gates, dependency hygiene, and the open-source baseline.",
+  "identifier": "code-futures",
+  "codeRepository": "https://github.com/oss-slu/code-futures",
+  "issueTracker": "https://github.com/oss-slu/code-futures/issues",
+  "license": "https://spdx.org/licenses/MIT",
+  "version": "1.0.0",
+  "dateCreated": "2026-10-29",
+  "datePublished": "2026-10-30",
+  "programmingLanguage": [
+    {
+      "@type": "ComputerLanguage",
+      "name": "Python",
+      "version": ">=3.11",
+      "url": "https://www.python.org"
+    }
+  ],
+  "runtimePlatform": "Python 3.11+",
+  "operatingSystem": ["Linux", "macOS"],
+  "softwareRequirements": [
+    {
+      "@type": "SoftwareApplication",
+      "identifier": "PyYAML",
+      "name": "PyYAML",
+      "version": ">=6.0"
+    },
+    {
+      "@type": "SoftwareApplication",
+      "identifier": "gh",
+      "name": "GitHub CLI",
+      "url": "https://cli.github.com",
+      "description": "Used as a subprocess for all GitHub access; handles authentication, pagination and SAML SSO."
+    }
+  ],
+  "author": [
+    {
+      "@type": "Person",
+      "givenName": "Daniel",
+      "familyName": "Shown",
+      "@id": "https://orcid.org/0009-0002-5716-8835",
+      "affiliation": {
+        "@type": "Organization",
+        "name": "Saint Louis University",
+        "url": "https://www.slu.edu"
+      }
+    }
+  ],
+  "maintainer": {
+    "@type": "Organization",
+    "name": "Open Source with SLU",
+    "url": "https://oss-slu.github.io",
+    "description": "The academic open source program office of Saint Louis University."
+  },
+  "keywords": [
+    "static analysis",
+    "software quality",
+    "technical debt",
+    "change coupling",
+    "computing education",
+    "open source program office"
+  ],
+  "developmentStatus": "active",
+  "readme": "https://github.com/oss-slu/code-futures/blob/main/README.md",
+  "referencePublication": [
+    {
+      "@type": "Book",
+      "name": "Tidy First? A Personal Exercise in Empirical Software Design",
+      "author": { "@type": "Person", "givenName": "Kent", "familyName": "Beck" },
+      "datePublished": "2023",
+      "isbn": "9781098151249"
+    },
+    {
+      "@type": "PresentationDigitalDocument",
+      "name": "Features Versus Futures",
+      "author": { "@type": "Person", "givenName": "Kent", "familyName": "Beck" },
+      "datePublished": "2026",
+      "url": "https://videos.itrevolution.com/watch/1183714411/"
+    },
+    {
+      "@type": "Book",
+      "name": "Your Code as a Crime Scene",
+      "author": { "@type": "Person", "givenName": "Adam", "familyName": "Tornhill" },
+      "datePublished": "2015",
+      "isbn": "9781680500387"
+    }
+  ],
+  "relatedLink": ["https://github.com/oss-slu/guidebook_code_futures"]
+}
