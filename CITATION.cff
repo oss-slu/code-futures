@@ -9,8 +9,8 @@ abstract: >-
   on the practice around it: linting, testing, review gates, dependency
   hygiene, and the open-source baseline. It produces a report per repository
   and a machine-readable snapshot, and knows nothing about courses, teams, or
-  people. The name follows Kent Beck's distinction between features, which are
-  what software does now, and futures, which are what remains possible later.
+  people. The name follows Kent Beck's framing of features, which are what
+  software does now, against futures, which are what remains possible later.
 authors:
   - given-names: Daniel
     family-names: Shown
@@ -39,9 +39,20 @@ references:
     year: 2023
     isbn: "9781098151249"
     notes: >-
-      Source of the features-versus-futures distinction the tool is named for,
-      and of the coupling and cohesion definitions the structural analysis
-      measures.
+      Source of the coupling and cohesion definitions the structural analysis
+      measures, of the cost argument behind the blast-radius finding, and of
+      the question the tidy-first finding answers.
+  - type: speech
+    title: "Features Versus Futures"
+    authors:
+      - given-names: Kent
+        family-names: Beck
+    year: 2026
+    url: "https://videos.itrevolution.com/watch/1183714411/"
+    notes: >-
+      Source of the features-versus-futures framing the tool is named for.
+      The underlying argument, that structure creates options rather than
+      value today, is developed in Tidy First?.
   - type: book
     title: "Your Code as a Crime Scene"
     authors:

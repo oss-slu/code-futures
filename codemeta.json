@@ -73,6 +73,13 @@
       "isbn": "9781098151249"
     },
     {
+      "@type": "PresentationDigitalDocument",
+      "name": "Features Versus Futures",
+      "author": { "@type": "Person", "givenName": "Kent", "familyName": "Beck" },
+      "datePublished": "2026",
+      "url": "https://videos.itrevolution.com/watch/1183714411/"
+    },
+    {
       "@type": "Book",
       "name": "Your Code as a Crime Scene",
       "author": { "@type": "Person", "givenName": "Adam", "familyName": "Tornhill" },
