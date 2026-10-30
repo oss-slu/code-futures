@@ -243,7 +243,7 @@ DETAIL: dict[tuple[str, Outcome], str] = {
     ): "None of the last {total} merged pull requests carried an approving review.",
     ("deps.known_vulnerabilities", Outcome.PRESENT): "{count} dependencies carry known advisories.",
     ("deps.known_vulnerabilities", Outcome.ABSENT): "No dependencies with known advisories.",
-    ("ci.present", Outcome.ENFORCED): "{count} workflows: {workflows}.",
+    ("ci.present", Outcome.ENFORCED): "{count} workflow{s}: {workflows}.",
     ("ci.present", Outcome.ABSENT): "No workflows found.",
     # --- Security ----------------------------------------------------------
     ("security.sast", Outcome.ENFORCED): "{reason}",

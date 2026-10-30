@@ -1,0 +1,436 @@
+# Code Futures — the reusable workflow teams call.
+#
+# A team adopts this by adding one file to their repository. See the README,
+# or section 6 of the guidebook, for the block to paste.
+#
+# ## Three things worth knowing before you edit this file
+#
+# **Nothing here fails a build.** Every job is `continue-on-error`. That is
+# load-bearing rather than courteous: a team whose build breaks on the day
+# they adopt a quality tool learns that quality tools are an obstacle, and
+# they are not wrong to conclude that from the evidence. Making a check
+# blocking is the team's decision, and section 7 of the guidebook covers what
+# it costs.
+#
+# **There is no `stack` input.** Every job checks for its own manifest and
+# skips when absent. Fewer inputs, fewer ways to misconfigure, nothing to
+# debug on a deadline -- and the polyglot repositories get both toolchains
+# instead of having to pick one. Several products here are Python *and*
+# React.
+#
+# **`summarize` runs `if: always()`.** If it only ran on success, a
+# repository with failing lint would produce no artifact and vanish from its
+# own report, making failure indistinguishable from never having adopted the
+# workflow. This is the single easiest thing to get wrong here.
+#
+# ## What this does not do
+#
+# It does not produce a report. It writes an artifact of facts, every one of
+# them already derivable by anyone who can clone the repository. The composed
+# report is assembled outside CI and reaches your tech lead. That is why this
+# job is called `summarize` rather than `report`: the two being easy to
+# confuse is the only route by which an internal document could end up
+# assembled in a public pipeline.
+
+name: Code Futures
+
+on:
+  workflow_call:
+    inputs:
+      ref:
+        description: Version of the Code Futures tooling to run.
+        type: string
+        # Pinned to the tag this file ships under, so one tag pins the
+        # workflow and the scripts it runs together. A team pinning
+        # `@v1.0.0` gets exactly this, which is the reproducibility an
+        # immutable tag is supposed to buy.
+        default: v1.0.0
+      python-version:
+        type: string
+        default: "3.12"
+      node-version:
+        type: string
+        default: "20"
+
+permissions:
+  contents: read
+
+jobs:
+  # --------------------------------------------------------------------
+  detect:
+    name: detect stacks
+    runs-on: ubuntu-latest
+    outputs:
+      python: ${{ steps.d.outputs.python }}
+      node: ${{ steps.d.outputs.node }}
+      java: ${{ steps.d.outputs.java }}
+      rust: ${{ steps.d.outputs.rust }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - id: d
+        name: Look for a manifest of each kind
+        # Manifests are searched for anywhere, not only at the root. Only 13
+        # of 39 Node repositories in this organisation keep their only
+        # manifest at the root; `frontend/`, `Frontend/`, `client_app/`,
+        # `client-app/`, `api/` and `app/` all occur, and a root-only check
+        # finds roughly half of what is there.
+        #
+        # Vendored trees are excluded. One repository commits its `.venv`,
+        # and another vendors an upstream package carrying more
+        # configuration than the team's own code.
+        run: |
+          set -euo pipefail
+          prune='-path ./node_modules -o -path ./.venv -o -path ./venv -o -path ./vendor -o -path ./.git'
+          find_any() {
+            # shellcheck disable=SC2086
+            found=$(find . \( $prune \) -prune -o -type f \( "$@" \) -print -quit)
+            [ -n "$found" ] && echo true || echo false
+          }
+          {
+            echo "python=$(find_any -name pyproject.toml -o -name requirements.txt -o -name setup.py -o -name setup.cfg -o -name Pipfile)"
+            echo "node=$(find_any -name package.json)"
+            echo "java=$(find_any -name pom.xml -o -name build.gradle -o -name build.gradle.kts)"
+            echo "rust=$(find_any -name Cargo.toml)"
+          } | tee -a "$GITHUB_OUTPUT"
+
+  # --------------------------------------------------------------------
+  python:
+    name: python
+    needs: detect
+    if: needs.detect.outputs.python == 'true'
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ inputs.python-version }}
+
+      - run: mkdir -p .code-futures-obs
+
+      - name: Lint
+        continue-on-error: true
+        run: |
+          set +e
+          pip install --quiet ruff
+          # Use the project's own ruff configuration when it has one. With no
+          # configuration, fall back to the error-and-undefined-name subset
+          # rather than the full default rule set: landing hundreds of style
+          # findings on a team who did not ask for them teaches only that the
+          # tool is noise. This subset is the same one the GitHub Actions
+          # Python starter template uses, and most repositories here that
+          # lint at all already use it.
+          if grep -qs '\[tool\.ruff\]' pyproject.toml; then
+            ruff check . ; code=$?
+            detail="ruff, using this project's configuration"
+          else
+            ruff check --select=E9,F63,F7,F82 . ; code=$?
+            detail="ruff, error and undefined-name checks only (no ruff config found)"
+          fi
+          outcome=$([ $code -eq 0 ] && echo enforced || echo enforced)
+          printf '{"probe":"lint","language":"Python","outcome":"%s","tool":"ruff","detail":"%s","blocking":"false","passed":"%s"}\n' \
+            "$outcome" "$detail" "$([ $code -eq 0 ] && echo true || echo false)" \
+            > .code-futures-obs/python-lint.json
+
+      - name: Format check
+        continue-on-error: true
+        # Only when a formatter is configured. Running a format check against
+        # a codebase nobody has formatted reports every file and says nothing.
+        run: |
+          set +e
+          if grep -qs -e '\[tool\.ruff\]' -e '\[tool\.black\]' pyproject.toml; then
+            pip install --quiet ruff
+            ruff format --check . ; code=$?
+            printf '{"probe":"format","language":"Python","outcome":"enforced","tool":"ruff format","detail":"checked in CI","blocking":"false","passed":"%s"}\n' \
+              "$([ $code -eq 0 ] && echo true || echo false)" \
+              > .code-futures-obs/python-format.json
+          fi
+
+      - name: Test
+        continue-on-error: true
+        # The one thing CI can establish that no file inspection can: not
+        # that a test runner is configured, but that it ran and what it did.
+        run: |
+          set +e
+          pip install --quiet pytest
+          [ -f requirements.txt ] && pip install --quiet -r requirements.txt
+          pip install --quiet -e . 2>/dev/null
+          out=$(pytest -q 2>&1); code=$?
+          echo "$out" | tail -20
+          summary=$(echo "$out" | grep -oE '[0-9]+ (passed|failed|error)' | paste -sd', ' - || true)
+          if echo "$out" | grep -q 'no tests ran\|collected 0 items'; then
+            printf '{"probe":"test.unit","outcome":"present","tool":"pytest","detail":"pytest ran and collected no tests","blocking":"false"}\n' \
+              > .code-futures-obs/python-test.json
+          else
+            printf '{"probe":"test.unit","outcome":"enforced","tool":"pytest","detail":"%s","blocking":"false","passed":"%s"}\n' \
+              "${summary:-pytest ran}" "$([ $code -eq 0 ] && echo true || echo false)" \
+              > .code-futures-obs/python-test.json
+          fi
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: cf-obs-python
+          path: .code-futures-obs/
+          if-no-files-found: ignore
+
+  # --------------------------------------------------------------------
+  node:
+    name: node
+    needs: detect
+    if: needs.detect.outputs.node == 'true'
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ inputs.node-version }}
+
+      - run: mkdir -p .code-futures-obs
+
+      - name: Find the package directory
+        id: pkg
+        # The manifest is frequently not at the root, and the directory name
+        # varies in case and separator: `frontend`, `Frontend`, `client_app`,
+        # `client-app`. Taking the first non-vendored `package.json` is crude
+        # and right more often than assuming the root.
+        run: |
+          set -euo pipefail
+          p=$(find . -path ./node_modules -prune -o -name package.json -print | head -1)
+          echo "dir=$(dirname "${p:-./package.json}")" | tee -a "$GITHUB_OUTPUT"
+
+      - name: Install
+        continue-on-error: true
+        working-directory: ${{ steps.pkg.outputs.dir }}
+        run: npm install --no-audit --no-fund || npm install --legacy-peer-deps --no-audit --no-fund
+
+      - name: Lint
+        continue-on-error: true
+        working-directory: ${{ steps.pkg.outputs.dir }}
+        # `npm run lint` is the most reliable lint signal in this
+        # organisation: 23 of 39 Node repositories define it. Where it is
+        # absent we do not substitute our own eslint run, because a team with
+        # no lint configuration would get a wall of findings from a rule set
+        # they never chose.
+        run: |
+          set +e
+          if node -e "process.exit(require('./package.json').scripts?.lint?0:1)"; then
+            npm run lint; code=$?
+            printf '{"probe":"lint","language":"JavaScript","outcome":"enforced","tool":"npm run lint","detail":"the project'"'"'s own lint script","blocking":"false","passed":"%s"}\n' \
+              "$([ $code -eq 0 ] && echo true || echo false)" \
+              > "$GITHUB_WORKSPACE/.code-futures-obs/node-lint.json"
+          fi
+
+      - name: Test
+        continue-on-error: true
+        working-directory: ${{ steps.pkg.outputs.dir }}
+        # A `test` script is not evidence that tests exist. Observed in this
+        # organisation: `echo "No tests specified" && exit 0`, the same with
+        # `exit 1`, and `"test": "next lint"`. Recording any of those as a
+        # test run would manufacture a suite out of an `echo`, so the script
+        # body is inspected before it is believed.
+        run: |
+          set +e
+          script=$(node -p "require('./package.json').scripts?.test || ''")
+          case "$script" in
+            ""|echo*|*"no test specified"*|*"No tests specified"*)
+              printf '{"probe":"test.unit","outcome":"absent","detail":"the test script runs no tests","blocking":"false"}\n' \
+                > "$GITHUB_WORKSPACE/.code-futures-obs/node-test.json"
+              ;;
+            *)
+              CI=true npm test --silent; code=$?
+              printf '{"probe":"test.unit","outcome":"enforced","tool":"npm test","detail":"ran: %s","blocking":"false","passed":"%s"}\n' \
+                "$(echo "$script" | head -c 80)" "$([ $code -eq 0 ] && echo true || echo false)" \
+                > "$GITHUB_WORKSPACE/.code-futures-obs/node-test.json"
+              ;;
+          esac
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: cf-obs-node
+          path: .code-futures-obs/
+          if-no-files-found: ignore
+
+  # --------------------------------------------------------------------
+  java:
+    name: java
+    needs: detect
+    if: needs.detect.outputs.java == 'true'
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "21"
+
+      - run: mkdir -p .code-futures-obs
+
+      - name: Build and test
+        continue-on-error: true
+        # `./gradlew build` triggers `check`, which runs the test task. The
+        # word "test" appears in no workflow in this organisation and the
+        # tests do execute, which is why the aggregate is what we invoke.
+        #
+        # `assembleRelease` is deliberately not used as a substitute:
+        # `assemble` and `check` are siblings under `build`, so it runs no
+        # tests at all.
+        run: |
+          set +e
+          if [ -f gradlew ]; then
+            chmod +x gradlew
+            ./gradlew build; code=$?
+            tool="gradle build"
+          elif [ -f pom.xml ]; then
+            mvn -B --no-transfer-progress test; code=$?
+            tool="maven test"
+          else
+            exit 0
+          fi
+          printf '{"probe":"test.unit","outcome":"enforced","tool":"%s","detail":"tests run through the build aggregate","blocking":"false","passed":"%s"}\n' \
+            "$tool" "$([ $code -eq 0 ] && echo true || echo false)" \
+            > .code-futures-obs/java-test.json
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: cf-obs-java
+          path: .code-futures-obs/
+          if-no-files-found: ignore
+
+  # --------------------------------------------------------------------
+  rust:
+    name: rust
+    needs: detect
+    if: needs.detect.outputs.rust == 'true'
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+
+      - run: mkdir -p .code-futures-obs
+
+      - name: Lint, format, test
+        continue-on-error: true
+        run: |
+          set +e
+          cargo clippy --all-targets -- -D warnings; lint=$?
+          cargo fmt --all -- --check; fmt=$?
+          cargo test; test=$?
+          {
+            printf '{"probe":"lint","language":"Rust","outcome":"enforced","tool":"clippy","detail":"cargo clippy","blocking":"false","passed":"%s"}\n' "$([ $lint -eq 0 ] && echo true || echo false)"
+          } > .code-futures-obs/rust-lint.json
+          printf '{"probe":"format","language":"Rust","outcome":"enforced","tool":"rustfmt","detail":"cargo fmt --check","blocking":"false","passed":"%s"}\n' \
+            "$([ $fmt -eq 0 ] && echo true || echo false)" > .code-futures-obs/rust-format.json
+          printf '{"probe":"test.unit","outcome":"enforced","tool":"cargo test","detail":"cargo test","blocking":"false","passed":"%s"}\n' \
+            "$([ $test -eq 0 ] && echo true || echo false)" > .code-futures-obs/rust-test.json
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: cf-obs-rust
+          path: .code-futures-obs/
+          if-no-files-found: ignore
+
+  # --------------------------------------------------------------------
+  sast:
+    name: sast
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    # **This is the permission the caller has to grant.** A reusable workflow
+    # cannot elevate beyond the workflow that called it, so `security-events:
+    # write` must be declared in the caller's file. Omitting it is the most
+    # likely reason a first attempt fails, and the error does not obviously
+    # point back at it.
+    permissions:
+      contents: read
+      security-events: write
+    steps:
+      - uses: actions/checkout@v4
+      - id: langs
+        # CodeQL needs to be told which languages to analyse, and fails
+        # rather than skipping when given none.
+        run: |
+          set -euo pipefail
+          langs=""
+          [ -n "$(find . -path ./node_modules -prune -o -name '*.py' -print -quit)" ] && langs="python"
+          if [ -n "$(find . -path ./node_modules -prune -o \( -name '*.js' -o -name '*.ts' -o -name '*.jsx' -o -name '*.tsx' \) -print -quit)" ]; then
+            langs="${langs:+$langs,}javascript-typescript"
+          fi
+          [ -n "$(find . -name '*.java' -print -quit)" ] && langs="${langs:+$langs,}java-kotlin"
+          echo "langs=$langs" | tee -a "$GITHUB_OUTPUT"
+
+      - uses: github/codeql-action/init@v3
+        if: steps.langs.outputs.langs != ''
+        with:
+          languages: ${{ steps.langs.outputs.langs }}
+      - uses: github/codeql-action/autobuild@v3
+        if: steps.langs.outputs.langs != ''
+      - uses: github/codeql-action/analyze@v3
+        if: steps.langs.outputs.langs != ''
+
+  # --------------------------------------------------------------------
+  summarize:
+    name: summarize
+    needs: [detect, python, node, java, rust, sast]
+    # **Never remove this.** On success-only, a repository with a failing
+    # check would produce no artifact and disappear from its own report,
+    # which makes a failure look identical to non-adoption.
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out the repository under analysis
+        uses: actions/checkout@v4
+        with:
+          # Required. The structural analysis reads commit history, and a
+          # shallow checkout has one commit -- which would make every
+          # structural finding vacuous rather than absent. `code-futures ci`
+          # refuses to run on a shallow checkout rather than reporting from
+          # truncated history.
+          fetch-depth: 0
+          path: subject
+
+      - name: Check out the Code Futures tooling
+        uses: actions/checkout@v4
+        with:
+          repository: oss-slu/code-futures
+          ref: ${{ inputs.ref }}
+          path: tooling
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install --quiet ./tooling
+
+      - name: Collect what the jobs observed
+        uses: actions/download-artifact@v4
+        with:
+          pattern: cf-obs-*
+          path: observations
+          merge-multiple: true
+        continue-on-error: true
+
+      - name: Write the artifact
+        # Writes `code-futures.json` and a terse outcome table. It does not
+        # render a report, and that absence is the mechanism rather than a
+        # policy: job summaries on a public repository are readable by
+        # anyone, and the composed report is internal.
+        run: |
+          code-futures ci \
+            --path subject \
+            --repository "${{ github.repository }}" \
+            --observations observations \
+            --output code-futures.json
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: code-futures
+          path: code-futures.json
