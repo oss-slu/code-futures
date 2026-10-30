@@ -2,7 +2,7 @@
   "@context": "https://doi.org/10.5063/schema/codemeta-2.0",
   "@type": "SoftwareSourceCode",
   "name": "Code Futures",
-  "description": "Given a repository, say what state its engineering practice is in. Reports on code structure — where complexity and churn concentrate, which files keep changing together, where a module boundary is leaking — and on the practice around it: linting, testing, review gates, dependency hygiene, and the open-source baseline.",
+  "description": "Given a repository, say what state its engineering practice is in. Reports on code structure \u2014 where complexity and churn concentrate, which files keep changing together, where a module boundary is leaking \u2014 and on the practice around it: linting, testing, review gates, dependency hygiene, and the open-source baseline.",
   "identifier": "code-futures",
   "codeRepository": "https://github.com/oss-slu/code-futures",
   "issueTracker": "https://github.com/oss-slu/code-futures/issues",
@@ -19,7 +19,10 @@
     }
   ],
   "runtimePlatform": "Python 3.11+",
-  "operatingSystem": ["Linux", "macOS"],
+  "operatingSystem": [
+    "Linux",
+    "macOS"
+  ],
   "softwareRequirements": [
     {
       "@type": "SoftwareApplication",
@@ -64,28 +67,8 @@
   ],
   "developmentStatus": "active",
   "readme": "https://github.com/oss-slu/code-futures/blob/main/README.md",
-  "referencePublication": [
-    {
-      "@type": "Book",
-      "name": "Tidy First? A Personal Exercise in Empirical Software Design",
-      "author": { "@type": "Person", "givenName": "Kent", "familyName": "Beck" },
-      "datePublished": "2023",
-      "isbn": "9781098151249"
-    },
-    {
-      "@type": "PresentationDigitalDocument",
-      "name": "Features Versus Futures",
-      "author": { "@type": "Person", "givenName": "Kent", "familyName": "Beck" },
-      "datePublished": "2026",
-      "url": "https://videos.itrevolution.com/watch/1183714411/"
-    },
-    {
-      "@type": "Book",
-      "name": "Your Code as a Crime Scene",
-      "author": { "@type": "Person", "givenName": "Adam", "familyName": "Tornhill" },
-      "datePublished": "2015",
-      "isbn": "9781680500387"
-    }
-  ],
-  "relatedLink": ["https://github.com/oss-slu/guidebook_code_futures"]
+  "relatedLink": [
+    "https://github.com/oss-slu/guidebook_code_futures",
+    "https://videos.itrevolution.com/watch/1183714411/"
+  ]
 }
