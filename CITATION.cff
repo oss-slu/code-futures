@@ -42,7 +42,14 @@ references:
       Source of the coupling and cohesion definitions the structural analysis
       measures, of the cost argument behind the blast-radius finding, and of
       the question the tidy-first finding answers.
-  - type: audiovisual
+  # `video` rather than `audiovisual`. The CFF schema defines neither --
+  # `type` carries one description, "The type of the work", and 47 bare enum
+  # values with no per-value definitions and no selection guidance. Both
+  # would validate. `video` is chosen because the vocabulary also contains
+  # `film-broadcast`, `sound-recording`, `multimedia` and `slides`: in a list
+  # that fine-grained the specific value is the intended one, or `video`
+  # would never be right for anything.
+  - type: video
     title: "Features Versus Futures"
     authors:
       - given-names: Kent
