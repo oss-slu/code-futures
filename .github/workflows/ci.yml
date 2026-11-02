@@ -100,9 +100,24 @@ jobs:
   # the repository already runs, rather than a new file. It is the path we
   # recommend, so it is the one worth proving.
   #
-  # Pinned to the released tag rather than to this branch on purpose. Teams
-  # will be on @v1.0.0, and a caller pointed at `main` would exercise
-  # something nobody else is running.
-  code-futures:
+  # Two callers on purpose.
+  #
+  # `code-futures-released` runs what teams actually run, pinned to the
+  # immutable tag. That is the one whose output matters.
+  #
+  # `code-futures-head` runs this branch, because the tag-pinned caller
+  # cannot test changes made after the tag was cut -- a run of it reported
+  # seven jobs and no `quality`, since `quality` did not exist at v1.0.0.
+  # A reusable workflow pinned immutably cannot verify its own development,
+  # which is a real cost of the tag policy and worth paying visibly rather
+  # than by quietly repointing the released caller.
+  code-futures-released:
     uses: oss-slu/code-futures/.github/workflows/code-futures.yml@v1.0.0
+    secrets: inherit
+
+  code-futures-head:
+    permissions:
+      contents: read
+      security-events: write
+    uses: ./.github/workflows/code-futures.yml
     secrets: inherit
