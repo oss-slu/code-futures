@@ -106,8 +106,13 @@ jobs:
           CPP_M=(-name .clang-format -o -name .clang-tidy -o -name meson.build -o -name CMakeLists.txt -o -name '*.uproject')
 
           first() {
+            # `-print -quit` rather than piping to `head -1`. With enough
+            # matches, `head` closes the pipe while `find` is still writing;
+            # `find` takes SIGPIPE, `pipefail` propagates the failure and
+            # `errexit` aborts this step partway through -- so the remaining
+            # stack outputs never get written and their jobs silently skip.
             # shellcheck disable=SC2086
-            find . -type d \( $prune \) -prune -o -type f \( "$@" \) -print 2>/dev/null | head -1
+            find . -type d \( $prune \) -prune -o -type f \( "$@" \) -print -quit 2>/dev/null
           }
           {
             m=$(first "${PY_M[@]}");  echo "python=$([ -n "$m" ] && echo true || echo false)"; echo "python_dir=$([ -n "$m" ] && dirname "$m" || echo .)"
