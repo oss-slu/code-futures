@@ -115,13 +115,11 @@ GLOSSARY = """## **Glossary**
 
 Five terms this report uses in a specific sense. The guidebook defines each at length, along with the rest of the vocabulary.
 
-| | |
-| ----- | ----- |
-| **Change coupling** | How often two files change in the same commit, as a share of commits touching either |
-| **Cohesion** | Whether that coupling sits inside one module or crosses between two |
-| **Hotspot** | A file where change frequency and complexity both concentrate |
-| **Blast radius** | How many files a change touches |
-| **Security hotspot** | Unrelated to the above. Security-sensitive code a person must review — not a vulnerability claim |
+* **Change coupling** — How often two files change in the same commit, as a share of commits touching either
+* **Cohesion** — Whether that coupling sits inside one module or crosses between two
+* **Hotspot** — A file where change frequency and complexity both concentrate
+* **Blast radius** — How many files a change touches
+* **Security hotspot** — Unrelated to the above. Security-sensitive code a person must review, not a vulnerability claim
 
 The outcome vocabulary — **enforced**, **present**, **absent**, **unreadable** — is at the top, under *How to read this*."""
 
