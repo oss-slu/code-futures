@@ -882,6 +882,60 @@ def structural(
     return out
 
 
+def baseline_from_tree(repository: str, paths: list[str] | None) -> list[ProbeResult]:
+    """The open-source baseline, from the file list we already fetched.
+
+    Exists because the remote path had no collector for any of it. The design
+    was to read the orchestration tooling's practice snapshot rather than
+    reimplement a check it already does well -- which is right, and was
+    nothing when no snapshot is configured: seven probes per repository fell
+    through to "No collector reported on this probe", so every report in a
+    29-repository sweep had an empty Open Source Baseline section. Two
+    hundred and three `unreadable` findings, every one of them answerable
+    from a list of filenames already in memory.
+
+    `review.required` is not answered here. It needs the branch-protection
+    API rather than a file listing, and an honest `unreadable` is better than
+    a guess about a gate.
+    """
+    if paths is None:
+        return [
+            ProbeResult(
+                id=pid,
+                outcome=Outcome.UNREADABLE,
+                attributes={"reason": "The repository's file list could not be read."},
+                source="tree",
+            )
+            for pid in _LOCAL_FILES
+        ]
+
+    have = set(paths)
+    out: list[ProbeResult] = []
+    for pid, candidates in _LOCAL_FILES.items():
+        found = next((c for c in candidates if c in have), None)
+        out.append(
+            ProbeResult(
+                id=pid,
+                outcome=Outcome.PRESENT if found else Outcome.ABSENT,
+                attributes={"path": found} if found else {},
+                evidence=[found] if found else [],
+                source="tree",
+            )
+        )
+
+    # A directory, so it needs a prefix match rather than an exact one.
+    issue_dir = any(x.startswith(".github/ISSUE_TEMPLATE") for x in have)
+    out.append(
+        ProbeResult(
+            id="practice.issue_template",
+            outcome=Outcome.PRESENT if issue_dir else Outcome.ABSENT,
+            attributes={"path": ".github/ISSUE_TEMPLATE/"} if issue_dir else {},
+            source="tree",
+        )
+    )
+    return out
+
+
 # --- Local practice baseline ------------------------------------------------
 
 _LOCAL_FILES = {

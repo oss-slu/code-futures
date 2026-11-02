@@ -83,10 +83,21 @@ def _build(repository: str, cfg, practice: dict | None) -> RepositoryReport:
     caps, languages = collectors.capabilities(repository)
     results += caps
     tree = github.tree(repository)
+    # Weaker than the practice snapshot and better than nothing, which is
+    # what the baseline section had without it. `merge` below keeps whichever
+    # source spoke with more authority, so this cannot displace a snapshot.
+    results += collectors.baseline_from_tree(repository, tree)
     results.append(collectors.readme_section_result(lambda p: github.file(repository, p), tree))
     results += collectors.structural(repository, tree)
     results += collectors.scorecard(repository, cfg)
     results += collectors.sonar(repository, cfg)
+
+    # Collapse two collectors answering one probe. Without this a report
+    # contradicted itself: `structure.duplication` appeared twice, once
+    # `unreadable` from the structural analysis and once `absent` from Sonar,
+    # and the renderer printed both. `merge` resolves by strength of
+    # evidence, which is what it was written for.
+    results = observe.merge(results, [])
 
     # Any probe no collector spoke to is unreadable, never absent. A silently
     # missing probe would render as a gap in somebody's repository.
