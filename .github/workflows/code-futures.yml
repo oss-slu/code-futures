@@ -75,6 +75,12 @@ permissions:
 # one ruff in the product rather than two. Bumping any of these is a
 # deliberate act with a test run behind it, not a side effect of a release
 # somewhere else.
+# All six are installed `--only-binary :all:`, which refuses source
+# distributions and so refuses to run a `setup.py` during install. Every one
+# of them publishes wheels, so it costs nothing -- the argument against the
+# flag is about a team's own `requirements.txt`, where a package without a
+# wheel is a real possibility and breaking their install to satisfy a rule
+# would be the wrong trade. Different lines, different answers.
 env:
   RUFF_VERSION: "0.14.2"
   BLACK_VERSION: "26.10.1"
@@ -172,7 +178,7 @@ jobs:
         continue-on-error: true
         run: |
           set +e
-          pip install --quiet "ruff==$RUFF_VERSION"
+          pip install --quiet --only-binary :all: "ruff==$RUFF_VERSION"
           # Use the project's own ruff configuration when it has one. With no
           # configuration, fall back to the error-and-undefined-name subset
           # rather than the full default rule set: landing hundreds of style
@@ -207,12 +213,12 @@ jobs:
           # Ruff's 88-character default would flag correctly formatted code
           # and attribute the finding to the wrong tool.
           if grep -qs -e '\[tool\.black\]' pyproject.toml; then
-            pip install --quiet "black==$BLACK_VERSION"
+            pip install --quiet --only-binary :all: "black==$BLACK_VERSION"
             black --check . ; code=$?
             tool="black"
           elif grep -qs -e '\[tool\.ruff\]' -e '\[tool\.ruff\.' pyproject.toml \
                || [ -f ruff.toml ] || [ -f .ruff.toml ]; then
-            pip install --quiet "ruff==$RUFF_VERSION"
+            pip install --quiet --only-binary :all: "ruff==$RUFF_VERSION"
             ruff format --check . ; code=$?
             tool="ruff format"
           else
@@ -228,7 +234,7 @@ jobs:
         # that a test runner is configured, but that it ran and what it did.
         run: |
           set +e
-          pip install --quiet "pytest==$PYTEST_VERSION"
+          pip install --quiet --only-binary :all: "pytest==$PYTEST_VERSION"
           # Deliberately unpinned, and flagged by Sonar for it. These are
           # the team's declared dependencies, resolved the way the team
           # resolves them. Pinning here would report on a dependency set
@@ -443,7 +449,7 @@ jobs:
           [ -n "$cfg" ] || exit 0
           root=$(dirname "$cfg")
           echo "clang-format configuration: $cfg"
-          pip install --quiet "clang-format==$CLANG_FORMAT_VERSION"
+          pip install --quiet --only-binary :all: "clang-format==$CLANG_FORMAT_VERSION"
 
           # Vendored C++ cannot be excluded by directory name here. One repo
           # keeps first-party plugin code and a third-party SDK side by side
@@ -474,7 +480,7 @@ jobs:
           dir=$(find . -name meson.build -not -path './subprojects/*' -print -quit)
           if [ -n "$dir" ]; then
             cd "$(dirname "$dir")" || exit 0
-            pip install --quiet "meson==$MESON_VERSION" "ninja==$NINJA_VERSION"
+            pip install --quiet --only-binary :all: "meson==$MESON_VERSION" "ninja==$NINJA_VERSION"
             obs="$GITHUB_WORKSPACE/code-futures-obs/cpp-test.json"
             if ! meson setup build >setup.log 2>&1; then
               # Configuration failed, usually a missing native dependency.

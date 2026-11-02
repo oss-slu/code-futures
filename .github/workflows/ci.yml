@@ -17,14 +17,13 @@ on:
   push:
     branches: [main]
 
+# `contents: read` only. `security-events: write` sits on the two jobs that
+# call the reusable workflow, not here -- which is what the README tells
+# teams to do, and what this file was not doing. A workflow-level write
+# grant reaches `lint`, `test` and `self`, none of which need it, so the
+# wrong version of this block quietly widened three unrelated jobs.
 permissions:
   contents: read
-  # Required by the `code-futures` job below, which calls the reusable
-  # workflow. A reusable workflow cannot grant itself more permission than
-  # its caller, so this has to be declared here. It is the line teams most
-  # often leave out, and this file is the demonstration that the instruction
-  # is correct.
-  security-events: write
 
 jobs:
   lint:
@@ -112,6 +111,9 @@ jobs:
   # which is a real cost of the tag policy and worth paying visibly rather
   # than by quietly repointing the released caller.
   code-futures-released:
+    permissions:
+      contents: read
+      security-events: write
     uses: oss-slu/code-futures/.github/workflows/code-futures.yml@v1.0.0
     secrets: inherit
 
