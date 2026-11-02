@@ -185,6 +185,56 @@ def workflows(repository: str) -> dict[str, str] | None:
     return out
 
 
+@dataclass
+class BranchGate:
+    """The default branch's protection, as three distinguishable states.
+
+    `state` is `protected`, `unprotected` or `unreadable`, and keeping the
+    third apart from the second is the whole reason this is not a plain dict.
+    GitHub answers an unprotected branch with `404 Branch not protected`, and
+    a token without the permission to ask with `403` -- both failures to the
+    `api()` wrapper, which returns `None` for each. Reading the second as the
+    first would report a repository as having no review gate because *we*
+    could not look.
+
+    `bypass_users` is a count. The API returns the logins of everyone allowed
+    to bypass review, and those are students: how many people can bypass a
+    gate is a fact about the gate, while who they are joined to a finding
+    about their repository is an education record. Only the count is kept.
+    """
+
+    state: str
+    reviews: int = 0
+    status_checks: bool = False
+    enforce_admins: bool = False
+    bypass_users: int = 0
+    detail: str = ""
+
+
+def branch_gate(repository: str, branch: str) -> BranchGate:
+    """Read branch protection, distinguishing "no gate" from "could not ask"."""
+    code, out, err = _gh("api", f"repos/{repository}/branches/{branch}/protection")
+    if code != 0:
+        blob = f"{err}\n{out}"
+        if "Branch not protected" in blob:
+            return BranchGate("unprotected")
+        return BranchGate("unreadable", detail="Branch protection settings could not be read.")
+    try:
+        data = json.loads(out)
+    except json.JSONDecodeError:
+        return BranchGate("unreadable", detail="Branch protection settings could not be parsed.")
+
+    reviews_block = data.get("required_pull_request_reviews") or {}
+    bypass = reviews_block.get("bypass_pull_request_allowances") or {}
+    return BranchGate(
+        state="protected",
+        reviews=int(reviews_block.get("required_approving_review_count") or 0),
+        status_checks=data.get("required_status_checks") is not None,
+        enforce_admins=bool((data.get("enforce_admins") or {}).get("enabled")),
+        bypass_users=len(bypass.get("users") or []),
+    )
+
+
 def contributor_count(repository: str) -> int | None:
     """How many people have committed, never who.
 

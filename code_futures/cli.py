@@ -114,6 +114,13 @@ def _build(repository: str, cfg, practice: dict | None) -> RepositoryReport:
             )
 
     branch = github.default_branch(repository)
+    if branch:
+        results = observe.merge(
+            results
+            + [collectors.review_required(github.branch_gate(repository, branch), branch, source="api")],
+            [],
+        )
+
     return RepositoryReport(
         repository=repository,
         collected_at=_now(),

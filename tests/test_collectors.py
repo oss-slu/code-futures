@@ -334,3 +334,107 @@ def test_unreal_project_treats_plugins_as_vendored(monkeypatch):
         with contextlib.suppress(RuntimeError):
             collectors.structural("oss-slu/x", paths)
         assert seen["extra"] == expected, f"for paths={paths}"
+
+
+# --- ci.present ------------------------------------------------------------
+#
+# A sweep of 29 repositories reported this `unreadable` for every one of
+# them, in the week of a class activity about adding CI. The local path
+# answered it from `paths`; the remote path had no collector for it once the
+# practice snapshot was absent. One function now serves both.
+
+
+def test_workflows_found_is_enforced_and_named():
+    r = collectors.ci_present(
+        [".github/workflows/ci.yml", ".github/workflows/deploy.yaml", "src/app.py"], source="tree"
+    )
+    assert r.outcome is Outcome.ENFORCED
+    assert r.attributes["count"] == "2"
+    assert "`ci.yml`" in r.attributes["workflows"]
+    assert "`deploy.yaml`" in r.attributes["workflows"]
+
+
+def test_no_workflows_is_absent():
+    assert collectors.ci_present(["src/app.py"], source="tree").outcome is Outcome.ABSENT
+
+
+def test_unreadable_tree_is_not_absent_ci():
+    r = collectors.ci_present(None, source="tree")
+    assert r.outcome is Outcome.UNREADABLE
+    assert "could not be read" in r.attributes["reason"]
+
+
+def test_non_workflow_files_in_the_directory_are_ignored():
+    """READMEs and `.gitkeep` live there too."""
+    r = collectors.ci_present([".github/workflows/README.md", ".github/workflows/.gitkeep"], source="tree")
+    assert r.outcome is Outcome.ABSENT
+
+
+def test_only_the_first_six_are_named():
+    paths = [f".github/workflows/w{i}.yml" for i in range(9)]
+    r = collectors.ci_present(paths, source="tree")
+    assert r.attributes["count"] == "9"
+    assert r.attributes["workflows"].count("`") == 12
+
+
+# --- review.required ------------------------------------------------------
+#
+# `unreadable` for all 29 repositories in a sweep, because nothing answered
+# it once the practice snapshot was absent. Branch protection is part of what
+# these teams are assessed on, so an unanswered gate is the worst probe to
+# leave blank.
+
+
+def gate(state, **kw):
+    from code_futures.github import BranchGate
+
+    return BranchGate(state, **kw)
+
+
+def test_unprotected_branch_is_absent():
+    r = collectors.review_required(gate("unprotected"), "main", source="api")
+    assert r.outcome is Outcome.ABSENT
+    assert r.attributes["branch"] == "main"
+
+
+def test_unreadable_protection_is_never_absent():
+    """GitHub answers 404 for unprotected and 403 for not-allowed-to-ask.
+
+    Both are failures to the `api()` wrapper. Reading the second as the first
+    would tell a team they have no review gate because we could not look.
+    """
+    r = collectors.review_required(gate("unreadable", detail="nope"), "main", source="api")
+    assert r.outcome is Outcome.UNREADABLE
+    assert r.attributes["reason"] == "nope"
+
+
+def test_protection_requiring_a_review_is_enforced():
+    r = collectors.review_required(
+        gate("protected", reviews=1, status_checks=True, enforce_admins=True), "main", source="api"
+    )
+    assert r.outcome is Outcome.ENFORCED
+    assert r.attributes["reviews"] == "1"
+    assert r.attributes["status_checks"] == "required"
+    assert r.attributes["admins"] == "subject to the rules"
+
+
+def test_protection_requiring_nothing_is_present_not_enforced():
+    """The trap this section exists for.
+
+    Protection switched on and requiring zero reviews still lets an
+    unreviewed pull request merge, and the settings page looks reassuring.
+    """
+    r = collectors.review_required(gate("protected", reviews=0), "main", source="api")
+    assert r.outcome is Outcome.PRESENT
+    assert r.attributes["admins"] == "exempt"
+
+
+def test_bypass_logins_never_reach_the_result():
+    """The API returns who may bypass review, and those people are students.
+
+    How many can bypass is a fact about the gate. Which of them can, joined
+    to a finding about their repository, is an education record.
+    """
+    r = collectors.review_required(gate("protected", reviews=1, bypass_users=3), "main", source="api")
+    assert "bypass" not in str(r.attributes).lower()
+    assert "3" not in r.attributes.get("reviews", "")

@@ -882,6 +882,72 @@ def structural(
     return out
 
 
+def review_required(gate, branch: str, *, source: str) -> ProbeResult:
+    """The review gate on the default branch.
+
+    `present` rather than `absent` is the interesting rung here, and it is
+    the trap the section exists for: protection that is switched on and
+    requires nothing still lets an unreviewed pull request merge, while the
+    settings page looks reassuring.
+    """
+    if gate.state == "unreadable":
+        return ProbeResult(
+            id="review.required",
+            outcome=Outcome.UNREADABLE,
+            attributes={"reason": gate.detail or "Branch protection settings could not be read."},
+            source=source,
+        )
+    if gate.state == "unprotected":
+        return ProbeResult(
+            id="review.required",
+            outcome=Outcome.ABSENT,
+            attributes={"branch": branch},
+            source=source,
+        )
+    return ProbeResult(
+        id="review.required",
+        outcome=Outcome.ENFORCED if gate.reviews > 0 else Outcome.PRESENT,
+        attributes={
+            "branch": branch,
+            "reviews": str(gate.reviews),
+            "status_checks": "required" if gate.status_checks else "not required",
+            "admins": "subject to the rules" if gate.enforce_admins else "exempt",
+        },
+        source=source,
+    )
+
+
+def ci_present(paths: list[str] | None, *, source: str) -> ProbeResult:
+    """Whether the repository has any workflows, from its file list.
+
+    One function for the local and the remote path, because they had drifted:
+    the local path answered this from `paths` and the remote path had no
+    collector for it at all once the practice snapshot was absent, so a sweep
+    of 29 repositories declined to say whether any of them had CI. In the
+    week of a class activity about adding CI.
+
+    `None` means the tree could not be read, which is our gap. An empty tree
+    listing means no workflows, which is a finding.
+    """
+    if paths is None:
+        return ProbeResult(
+            id="ci.present",
+            outcome=Outcome.UNREADABLE,
+            attributes={"reason": "The repository's file list could not be read."},
+            source=source,
+        )
+    wf = [p for p in paths if p.startswith(".github/workflows/") and p.endswith((".yml", ".yaml"))]
+    return ProbeResult(
+        id="ci.present",
+        outcome=Outcome.ENFORCED if wf else Outcome.ABSENT,
+        attributes={
+            "count": str(len(wf)),
+            "workflows": ", ".join(f"`{p.rsplit('/', 1)[-1]}`" for p in wf[:6]),
+        },
+        source=source,
+    )
+
+
 def baseline_from_tree(repository: str, paths: list[str] | None) -> list[ProbeResult]:
     """The open-source baseline, from the file list we already fetched.
 
@@ -922,6 +988,8 @@ def baseline_from_tree(repository: str, paths: list[str] | None) -> list[ProbeRe
                 source="tree",
             )
         )
+
+    out.append(ci_present(paths, source="tree"))
 
     # A directory, so it needs a prefix match rather than an exact one.
     issue_dir = any(x.startswith(".github/ISSUE_TEMPLATE") for x in have)
@@ -1076,16 +1144,5 @@ def local_practice(paths: list[str], read_file) -> list[ProbeResult]:
         )
     )
 
-    wf = [p for p in paths if p.startswith(".github/workflows/") and p.endswith((".yml", ".yaml"))]
-    out.append(
-        ProbeResult(
-            id="ci.present",
-            outcome=Outcome.ENFORCED if wf else Outcome.ABSENT,
-            attributes={
-                "count": str(len(wf)),
-                "workflows": ", ".join(f"`{p.rsplit('/', 1)[-1]}`" for p in wf[:6]),
-            },
-            source="local",
-        )
-    )
+    out.append(ci_present(paths, source="local"))
     return out
