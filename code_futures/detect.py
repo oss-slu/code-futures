@@ -125,14 +125,24 @@ def resolve_script(scripts: dict[str, str], command: str) -> tuple[str, bool]:
     return body, not bool(_HOLLOW_SCRIPT.search(body))
 
 
+# Directory suffixes that mark generated output. Matched as suffixes because
+# the directory name carries the package name: `mithridatium.egg-info`.
+#
+# Found by reading a real report rather than by reasoning: the strongest
+# change coupling in it was `PKG-INFO` against `SOURCES.txt`, two files inside
+# an `.egg-info` directory, which is build output regenerated on every
+# install. The headline structural finding was an artefact.
+VENDORED_SUFFIXES: tuple[str, ...] = (".egg-info", ".dist-info", ".egg-link")
+
+
 def is_vendored(path: str) -> bool:
-    """Whether a path sits inside somebody else's tree.
+    """Whether a path sits inside somebody else's tree, or is generated.
 
     The single most important filter in this module. Without it one
     repository's committed virtualenv makes it the best-tested project in the
     organisation.
     """
-    return any(seg in VENDORED for seg in path.split("/"))
+    return any(seg in VENDORED or seg.endswith(VENDORED_SUFFIXES) for seg in path.split("/"))
 
 
 @dataclass(frozen=True)

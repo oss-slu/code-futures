@@ -209,6 +209,46 @@ _CAPABILITY_PROBES = (
 )
 
 
+def readme_section_result(read_file, paths: list[str] | None) -> ProbeResult:
+    """Whether the README covers the four sections the conventions expect.
+
+    Wired here as well as in the local path. It existed only there, so every
+    remote report said "No collector reported on this probe" -- a probe that
+    is only ever unreadable is worse than no probe.
+    """
+    candidates = ("README.md", "README.rst", "README")
+    name = next((c for c in candidates if paths and c in paths), None)
+    if name is None:
+        return ProbeResult(
+            id="practice.readme_sections",
+            outcome=Outcome.UNREADABLE,
+            attributes={"reason": "There is no README to read."},
+            source="capability",
+        )
+    body = read_file(name)
+    if body is None:
+        return ProbeResult(
+            id="practice.readme_sections",
+            outcome=Outcome.UNREADABLE,
+            attributes={"reason": "The README could not be read."},
+            source="capability",
+        )
+    found, missing = readme_sections(body)
+    if not missing:
+        return ProbeResult(
+            id="practice.readme_sections",
+            outcome=Outcome.PRESENT,
+            detail="Covers all four expected sections.",
+            source="capability",
+        )
+    return ProbeResult(
+        id="practice.readme_sections",
+        outcome=Outcome.PRESENT,
+        attributes={"found": str(len(found)), "missing": ", ".join(missing)},
+        source="capability",
+    )
+
+
 def capabilities(
     repository: str,
     *,
@@ -294,6 +334,8 @@ def capabilities(
 
 _SCORECARD_PROBES = {
     "SAST": "security.sast",
+    "Code-Review": "review.practiced",
+    "Vulnerabilities": "deps.known_vulnerabilities",
     "Security-Policy": "practice.security_policy",
     "Token-Permissions": "security.token_permissions",
     "Dangerous-Workflow": "security.workflow_safety",
@@ -354,10 +396,23 @@ def scorecard(repository: str, cfg: Config) -> list[ProbeResult]:
         probe_id = _SCORECARD_PROBES.get(check.get("name", ""))
         if not probe_id:
             continue
-        outcome, attrs = _scorecard_outcome(int(check.get("score", -1)), check.get("reason", ""))
+        score = int(check.get("score", -1))
+        outcome, attrs = _scorecard_outcome(score, check.get("reason", ""))
         if probe_id == "practice.security_policy" and outcome is Outcome.ENFORCED:
             outcome = Outcome.PRESENT  # nothing runs a SECURITY.md
             attrs = {"path": "SECURITY.md"}
+        elif probe_id == "deps.known_vulnerabilities" and score >= 0:
+            # Inverted: a 10 means no advisories were found. `present` here
+            # means advisories exist, which is why the probe is named for the
+            # vulnerabilities rather than for their absence.
+            outcome = Outcome.ABSENT if score >= 10 else Outcome.PRESENT
+            attrs = {"reason": check.get("reason", "")}
+        elif probe_id == "review.practiced" and score >= 0:
+            # A proportion of recent changes, not a state. Reported as the
+            # rung it reaches, with Scorecard's own sentence as the detail --
+            # the interesting finding is disagreement with `review.required`.
+            outcome = Outcome.ENFORCED if score >= 7 else Outcome.PRESENT if score > 0 else Outcome.ABSENT
+            attrs = {"reason": check.get("reason", "")}
         out.append(ProbeResult(id=probe_id, outcome=outcome, attributes=attrs, source="scorecard"))
     return out
 

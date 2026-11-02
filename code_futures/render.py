@@ -342,6 +342,22 @@ def _lead_item(report: RepositoryReport) -> dict | None:
     return got[0][2] if got else None
 
 
+def _probe_list(bad: list[ProbeResult], show: int = 4) -> str:
+    """Name the unreadable probes, saying so when the list is truncated.
+
+    An earlier version said "Eight probes unreadable" and then named four,
+    which reads as a complete list and is not one.
+    """
+    if not bad:
+        return ""
+    names = [f"`{r.id}`" for r in bad[:show]]
+    rest = len(bad) - len(names)
+    joined = _join(names)
+    if rest:
+        return f"{joined}, and {_spell(rest) if rest <= 10 else rest} more"
+    return joined
+
+
 def _summary(report: RepositoryReport) -> str:
     """The precis at the top.
 
@@ -414,7 +430,7 @@ def _summary(report: RepositoryReport) -> str:
             S.SUMMARY_UNREADABLE.format(
                 count=_spell(len(bad)).capitalize(),
                 s="" if len(bad) == 1 else "s",
-                probes=_join([f"`{r.id}`" for r in bad[:4]]),
+                probes=_probe_list(bad),
             ),
         ]
     return "\n".join(parts)
