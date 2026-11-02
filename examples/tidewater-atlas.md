@@ -17,6 +17,22 @@
 
 ---
 
+## **Summary**
+
+34 probes, 36 findings in Python and JavaScript, at `a0408fc`.
+
+| enforced | present | absent | unreadable |
+| -------- | ------- | ------ | ---------- |
+| 9        | 18      | 8      | 1          |
+
+**Structure.** 4 hotspots; 3 coupled file pairs (2 crossing a module boundary); 3 churning files with no test. `api/services/sync.py` would repay tidying soonest.
+
+**Suggested first step.** The dependencies with known advisories — [the reasoning is below](#where-to-start).
+
+**One probe unreadable**: `security.sast`. That is our gap rather than this repository's.
+
+---
+
 ## **How to read this**
 
 This report describes which engineering practices are in place in one repository. It records practice. Judging the code is a separate job, done by people, and nothing here feeds an evaluation.
@@ -30,16 +46,7 @@ Each finding carries one of four outcomes:
 
 The companion guidebook explains each probe and the limits of what it shows. Read §3 before acting on anything below.
 
----
-
-## **Outcomes**
-
-| Outcome    | Count |
-| ---------- | ----- |
-| enforced   | 9     |
-| present    | 18    |
-| absent     | 8     |
-| unreadable | 1     |
+36 findings from 34 probes, because `lint` and `format` are answered once per language.
 
 ### **Measurements, not a score**
 
@@ -49,7 +56,19 @@ Two numbers are deliberately absent. We do not publish the OpenSSF Scorecard's 0
 
 Use the outcome counts as an index to find your place. Each probe reports on one practice, and the practices a project needs depend on what it is for.
 
-36 findings from 34 probes, because `lint` and `format` are answered once per language.
+### **Contents**
+
+| Section                                                      | Findings |
+| ------------------------------------------------------------ | -------- |
+| [1. Structure](#1-structure)                                 | 8        |
+| [2. Open Source Baseline](#2-open-source-baseline)           | 8        |
+| [3. Linting and Formatting](#3-linting-and-formatting)       | 4        |
+| [4. Testing](#4-testing)                                     | 5        |
+| [5. Review and Integration](#5-review-and-integration)       | 3        |
+| [6. Security and Dependencies](#6-security-and-dependencies) | 5        |
+| [7. Code Quality Analysis](#7-code-quality-analysis)         | 3        |
+
+Every report carries the same sections in the same order, so two can be read side by side. A section that found nothing says so rather than being left out.
 
 ---
 
@@ -247,7 +266,7 @@ If an outcome in your report reads **unreadable** and you believe it is wrong, t
 
 ## **7. Code Quality Analysis**
 
-What continuous static analysis reports. This section carries no grade: it records whether the analysis runs and whether anyone has acted on what it flags.
+What continuous static analysis reports: whether it runs, and whether anyone has acted on what it flags.
 
 * **`quality.project`** — **enforced**. Analysed as `oss-slu_tidewater-atlas`. Last analysis 2026-10-30.
 * **`quality.gate`** — **enforced**. Quality gate `default`, applied in CI. Current status: Passed.
@@ -291,6 +310,20 @@ Then, in order:
 3. **Run `eslint` in CI.** The configuration exists; this adds a step that invokes it. Expect many findings on first run — the guidebook covers landing a linter without a hundred-file diff.
 
 Every item here is a future rather than a feature. None will be visible to a user, which is why they are easy to postpone, and why naming them is worth doing.
+
+---
+
+## **Glossary**
+
+Five terms this report uses in a specific sense. The guidebook defines each at length, along with the rest of the vocabulary.
+
+* **Change coupling** — How often two files change in the same commit, as a share of commits touching either
+* **Cohesion** — Whether that coupling sits inside one module or crosses between two
+* **Hotspot** — A file where change frequency and complexity both concentrate
+* **Blast radius** — How many files a change touches
+* **Security hotspot** — Unrelated to the above. Security-sensitive code a person must review, not a vulnerability claim
+
+The outcome vocabulary — **enforced**, **present**, **absent**, **unreadable** — is at the top, under *How to read this*.
 
 ---
 
