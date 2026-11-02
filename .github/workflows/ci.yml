@@ -19,6 +19,12 @@ on:
 
 permissions:
   contents: read
+  # Required by the `code-futures` job below, which calls the reusable
+  # workflow. A reusable workflow cannot grant itself more permission than
+  # its caller, so this has to be declared here. It is the line teams most
+  # often leave out, and this file is the demonstration that the instruction
+  # is correct.
+  security-events: write
 
 jobs:
   lint:
@@ -86,3 +92,17 @@ jobs:
         with:
           name: code-futures-self-report
           path: self-report.md
+
+  # ------------------------------------------------------------------
+  # Dogfooding: call our own reusable workflow exactly as a team does.
+  #
+  # This is "option 2" from the class activity -- a job added to a workflow
+  # the repository already runs, rather than a new file. It is the path we
+  # recommend, so it is the one worth proving.
+  #
+  # Pinned to the released tag rather than to this branch on purpose. Teams
+  # will be on @v1.0.0, and a caller pointed at `main` would exercise
+  # something nobody else is running.
+  code-futures:
+    uses: oss-slu/code-futures/.github/workflows/code-futures.yml@v1.0.0
+    secrets: inherit
