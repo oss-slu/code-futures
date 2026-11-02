@@ -157,6 +157,22 @@ jobs:
 
 **Copy the `permissions:` block exactly.** Omitting it is the most likely reason a first attempt fails. A reusable workflow cannot grant itself more permission than the workflow calling it, so `security-events: write` must be declared *in your repository*. Without it the security scanning job fails, and the error does not obviously point back here.
 
+**Adding it to a workflow you already have?** Put the permissions on the *job* rather than at the top of the file:
+
+```yaml
+jobs:
+  # ...your jobs, unchanged...
+
+  code-futures:
+    permissions:
+      contents: read
+      security-events: write
+    uses: oss-slu/code-futures/.github/workflows/code-futures.yml@v1.0.0
+    secrets: inherit
+```
+
+If that workflow declares no top-level `permissions:` today, its jobs inherit the default — and adding a top-level block would restrict them too. Tightening unrelated jobs as a side effect of adding a report is not a trade worth making. Whatever triggers that workflow triggers this, so pick one that runs at least once a sprint.
+
 **Nothing will fail your build.** Every job is advisory, and that is deliberate rather than timid: a build that breaks the day you adopt a quality tool teaches you that quality tools are an obstacle. Making a check blocking is a later decision, and section 7 of the guidebook covers what it costs.
 
 **There is no stack to declare.** Each job looks for its own manifest and skips when it finds none. A repository that is Python *and* React gets both toolchains rather than having to pick one.
