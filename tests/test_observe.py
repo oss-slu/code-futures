@@ -127,3 +127,106 @@ class TestMerge:
         observed = [ProbeResult("lint", Outcome.ENFORCED, language="Python", attributes={"passed": "false"})]
         got = observe.merge([], observed)
         assert got[0].attributes["passed"] == "false"
+
+
+class TestMalformedFieldTypes:
+    """Fragments come from shell scripts, so a field can be any JSON type.
+
+    The module docstring promises a malformed fragment costs its own probe.
+    It did not: an unhashable value raised at the membership check and took
+    every healthy fragment in the run with it.
+    """
+
+    def test_unhashable_probe_does_not_raise(self, tmp_path):
+        _write(tmp_path, "a.json", {"probe": [], "outcome": "enforced"})
+        _write(tmp_path, "b.json", {"probe": "test.unit", "outcome": "enforced"})
+        got = observe.load(tmp_path)
+        assert [r.id for r in got] == ["test.unit"]
+
+    def test_non_string_outcome_is_skipped(self, tmp_path):
+        _write(tmp_path, "a.json", {"probe": "test.unit", "outcome": 3})
+        assert observe.load(tmp_path) == []
+
+    def test_null_evidence_does_not_raise(self, tmp_path):
+        _write(tmp_path, "a.json", {"probe": "test.unit", "outcome": "enforced", "evidence": None})
+        assert observe.load(tmp_path)[0].evidence == []
+
+    def test_list_valued_language_is_skipped(self, tmp_path):
+        _write(tmp_path, "a.json", {"probe": "lint", "outcome": "enforced", "language": ["Python"]})
+        assert observe.load(tmp_path) == []
+
+    def test_structured_attribute_is_dropped_not_stringified(self, tmp_path):
+        _write(
+            tmp_path,
+            "a.json",
+            {
+                "probe": "test.unit",
+                "outcome": "enforced",
+                "blocking": "false",
+                "junk": {"a": 1},
+            },
+        )
+        got = observe.load(tmp_path)[0]
+        assert got.attributes == {"blocking": "false"}
+
+    def test_one_bad_fragment_in_a_list_keeps_the_rest(self, tmp_path):
+        _write(
+            tmp_path,
+            "a.json",
+            [
+                {"probe": [], "outcome": "enforced"},
+                {"probe": "test.e2e", "outcome": "absent"},
+            ],
+        )
+        assert [r.id for r in observe.load(tmp_path)] == ["test.e2e"]
+
+
+class TestSingleAnswerCollision:
+    """All four language jobs emit `test.unit`, which is not per-language.
+
+    Fragments are read in filename order, so `java-test.json` sorted before
+    `node-test.json` and Node's `absent` placeholder overwrote a real Java
+    test run. Filename order was deciding what a repository is.
+    """
+
+    def test_a_real_run_is_not_overwritten_by_an_absent_placeholder(self):
+        java = ProbeResult("test.unit", Outcome.ENFORCED, tool="gradle build", detail="tests ran")
+        node = ProbeResult("test.unit", Outcome.ABSENT, detail="the test script runs no tests")
+        for order in ([java, node], [node, java]):
+            got = observe.merge([], list(order))
+            assert len(got) == 1
+            assert got[0].outcome is Outcome.ENFORCED, order
+
+    def test_the_weaker_finding_stays_visible(self):
+        """Two facts, not a contradiction: pytest ran, and the Node test
+        script is an echo."""
+        strong = ProbeResult("test.unit", Outcome.ENFORCED, tool="pytest", detail="41 passed")
+        weak = ProbeResult("test.unit", Outcome.ABSENT, detail="the test script runs no tests")
+        got = observe.merge([], [strong, weak])[0]
+        assert "41 passed" in got.detail
+        assert "runs no tests" in got.detail
+
+    def test_unreadable_never_displaces_a_real_answer(self):
+        real = ProbeResult("test.unit", Outcome.ABSENT, detail="no runner configured")
+        unk = ProbeResult("test.unit", Outcome.UNREADABLE, attributes={"reason": "timed out"})
+        for order in ([real, unk], [unk, real]):
+            assert observe.merge([], list(order))[0].outcome is Outcome.ABSENT, order
+
+    def test_per_language_probes_are_still_kept_apart(self):
+        got = observe.merge(
+            [],
+            [
+                ProbeResult("lint", Outcome.ENFORCED, language="Python", tool="ruff"),
+                ProbeResult("lint", Outcome.ABSENT, language="JavaScript"),
+            ],
+        )
+        assert {r.language: r.outcome for r in got} == {
+            "Python": Outcome.ENFORCED,
+            "JavaScript": Outcome.ABSENT,
+        }
+
+    def test_evidence_from_both_jobs_survives(self):
+        a = ProbeResult("test.unit", Outcome.ENFORCED, evidence=["ci.yml"])
+        b = ProbeResult("test.unit", Outcome.PRESENT, evidence=["package.json"])
+        got = observe.merge([], [a, b])[0]
+        assert set(got.evidence) == {"ci.yml", "package.json"}

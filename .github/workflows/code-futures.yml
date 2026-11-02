@@ -60,11 +60,18 @@ jobs:
   detect:
     name: detect stacks
     runs-on: ubuntu-latest
+    # Advisory like every other job. Without this a checkout or shell failure
+    # here fails the caller's build, which is the one promise this workflow
+    # makes that must not break.
+    continue-on-error: true
     outputs:
       python: ${{ steps.d.outputs.python }}
       node: ${{ steps.d.outputs.node }}
       java: ${{ steps.d.outputs.java }}
       rust: ${{ steps.d.outputs.rust }}
+      python_dir: ${{ steps.d.outputs.python_dir }}
+      java_dir: ${{ steps.d.outputs.java_dir }}
+      rust_dir: ${{ steps.d.outputs.rust_dir }}
     steps:
       - uses: actions/checkout@v4
 
@@ -87,8 +94,22 @@ jobs:
             found=$(find . \( $prune \) -prune -o -type f \( "$@" \) -print -quit)
             [ -n "$found" ] && echo true || echo false
           }
+          # Where the manifest actually is. Detection accepted nested
+          # manifests while every job installed and ran from the root, so a
+          # Python project under `backend/` had its dependencies missed, a
+          # Gradle project under `android/` had its tests silently skipped,
+          # and a nested crate was recorded as enforced having found no
+          # manifest at all.
+          dir_of() {
+            # shellcheck disable=SC2086
+            found=$(find . \( $prune \) -prune -o -type f \( "$@" \) -print -quit)
+            [ -n "$found" ] && dirname "$found" || echo .
+          }
           {
             echo "python=$(find_any -name pyproject.toml -o -name requirements.txt -o -name setup.py -o -name setup.cfg -o -name Pipfile)"
+            echo "python_dir=$(dir_of -name pyproject.toml -o -name requirements.txt -o -name setup.py)"
+            echo "java_dir=$(dir_of -name pom.xml -o -name build.gradle -o -name build.gradle.kts)"
+            echo "rust_dir=$(dir_of -name Cargo.toml)"
             echo "node=$(find_any -name package.json)"
             echo "java=$(find_any -name pom.xml -o -name build.gradle -o -name build.gradle.kts)"
             echo "rust=$(find_any -name Cargo.toml)"
@@ -101,13 +122,17 @@ jobs:
     if: needs.detect.outputs.python == 'true'
     runs-on: ubuntu-latest
     continue-on-error: true
+    defaults:
+      run:
+        # Where the manifest is, which is not always the root.
+        working-directory: ${{ needs.detect.outputs.python_dir }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
           python-version: ${{ inputs.python-version }}
 
-      - run: mkdir -p .code-futures-obs
+      - run: mkdir -p "$GITHUB_WORKSPACE/code-futures-obs"
 
       - name: Lint
         continue-on-error: true
@@ -121,7 +146,11 @@ jobs:
           # tool is noise. This subset is the same one the GitHub Actions
           # Python starter template uses, and most repositories here that
           # lint at all already use it.
-          if grep -qs '\[tool\.ruff\]' pyproject.toml; then
+          # Four configuration forms, any of which means the project chose
+          # its own rules: a `[tool.ruff]` or `[tool.ruff.lint]` table in
+          # pyproject, or a `ruff.toml` / `.ruff.toml` of its own.
+          if grep -qs -e '\[tool\.ruff\]' -e '\[tool\.ruff\.' pyproject.toml \
+             || [ -f ruff.toml ] || [ -f .ruff.toml ]; then
             ruff check . ; code=$?
             detail="ruff, using this project's configuration"
           else
@@ -131,7 +160,7 @@ jobs:
           outcome=$([ $code -eq 0 ] && echo enforced || echo enforced)
           printf '{"probe":"lint","language":"Python","outcome":"%s","tool":"ruff","detail":"%s","blocking":"false","passed":"%s"}\n' \
             "$outcome" "$detail" "$([ $code -eq 0 ] && echo true || echo false)" \
-            > .code-futures-obs/python-lint.json
+            > "$GITHUB_WORKSPACE/code-futures-obs"/python-lint.json
 
       - name: Format check
         continue-on-error: true
@@ -139,13 +168,25 @@ jobs:
         # a codebase nobody has formatted reports every file and says nothing.
         run: |
           set +e
-          if grep -qs -e '\[tool\.ruff\]' -e '\[tool\.black\]' pyproject.toml; then
+          # Run whatever the project configured, and record that tool. Ruff
+          # does not read `[tool.black]`, so checking a Black project with
+          # Ruff's 88-character default would flag correctly formatted code
+          # and attribute the finding to the wrong tool.
+          if grep -qs -e '\[tool\.black\]' pyproject.toml; then
+            pip install --quiet black
+            black --check . ; code=$?
+            tool="black"
+          elif grep -qs -e '\[tool\.ruff\]' -e '\[tool\.ruff\.' pyproject.toml \
+               || [ -f ruff.toml ] || [ -f .ruff.toml ]; then
             pip install --quiet ruff
             ruff format --check . ; code=$?
-            printf '{"probe":"format","language":"Python","outcome":"enforced","tool":"ruff format","detail":"checked in CI","blocking":"false","passed":"%s"}\n' \
-              "$([ $code -eq 0 ] && echo true || echo false)" \
-              > .code-futures-obs/python-format.json
+            tool="ruff format"
+          else
+            exit 0
           fi
+          jq -n --arg tool "$tool" --arg passed "$([ $code -eq 0 ] && echo true || echo false)" \
+            '{probe:"format",language:"Python",outcome:"enforced",tool:$tool,detail:"checked in CI",blocking:"false",passed:$passed}' \
+            > "$GITHUB_WORKSPACE/code-futures-obs"/python-format.json
 
       - name: Test
         continue-on-error: true
@@ -161,18 +202,18 @@ jobs:
           summary=$(echo "$out" | grep -oE '[0-9]+ (passed|failed|error)' | paste -sd', ' - || true)
           if echo "$out" | grep -q 'no tests ran\|collected 0 items'; then
             printf '{"probe":"test.unit","outcome":"present","tool":"pytest","detail":"pytest ran and collected no tests","blocking":"false"}\n' \
-              > .code-futures-obs/python-test.json
+              > "$GITHUB_WORKSPACE/code-futures-obs"/python-test.json
           else
             printf '{"probe":"test.unit","outcome":"enforced","tool":"pytest","detail":"%s","blocking":"false","passed":"%s"}\n' \
               "${summary:-pytest ran}" "$([ $code -eq 0 ] && echo true || echo false)" \
-              > .code-futures-obs/python-test.json
+              > "$GITHUB_WORKSPACE/code-futures-obs"/python-test.json
           fi
 
       - uses: actions/upload-artifact@v4
         if: always()
         with:
           name: cf-obs-python
-          path: .code-futures-obs/
+          path: code-futures-obs/
           if-no-files-found: ignore
 
   # --------------------------------------------------------------------
@@ -188,7 +229,7 @@ jobs:
         with:
           node-version: ${{ inputs.node-version }}
 
-      - run: mkdir -p .code-futures-obs
+      - run: mkdir -p "$GITHUB_WORKSPACE/code-futures-obs"
 
       - name: Find the package directory
         id: pkg
@@ -218,9 +259,9 @@ jobs:
           set +e
           if node -e "process.exit(require('./package.json').scripts?.lint?0:1)"; then
             npm run lint; code=$?
-            printf '{"probe":"lint","language":"JavaScript","outcome":"enforced","tool":"npm run lint","detail":"the project'"'"'s own lint script","blocking":"false","passed":"%s"}\n' \
-              "$([ $code -eq 0 ] && echo true || echo false)" \
-              > "$GITHUB_WORKSPACE/.code-futures-obs/node-lint.json"
+            jq -n --arg passed "$([ $code -eq 0 ] && echo true || echo false)" \
+              '{probe:"lint",language:"JavaScript",outcome:"enforced",tool:"npm run lint",detail:"the project'"'"'s own lint script",blocking:"false",passed:$passed}' \
+              > "$GITHUB_WORKSPACE/code-futures-obs/node-lint.json"
           fi
 
       - name: Test
@@ -234,16 +275,28 @@ jobs:
         run: |
           set +e
           script=$(node -p "require('./package.json').scripts?.test || ''")
+          obs="$GITHUB_WORKSPACE/code-futures-obs/node-test.json"
           case "$script" in
-            ""|echo*|*"no test specified"*|*"No tests specified"*)
-              printf '{"probe":"test.unit","outcome":"absent","detail":"the test script runs no tests","blocking":"false"}\n' \
-                > "$GITHUB_WORKSPACE/.code-futures-obs/node-test.json"
+            # A `test` script that runs no tests. Observed in this
+            # organisation: an `echo`, an `exit 1`, and `next lint` -- which
+            # runs the linter and would otherwise be recorded as a passing
+            # unit-test suite, overriding the inference that correctly
+            # classifies it as lint.
+            ""|echo*|*"no test specified"*|*"No tests specified"*|*lint*)
+              jq -n --arg s "$script" \
+                '{probe:"test.unit",outcome:"absent",detail:("the test script runs no tests: " + $s),blocking:"false"}' \
+                > "$obs"
               ;;
             *)
               CI=true npm test --silent; code=$?
-              printf '{"probe":"test.unit","outcome":"enforced","tool":"npm test","detail":"ran: %s","blocking":"false","passed":"%s"}\n' \
-                "$(echo "$script" | head -c 80)" "$([ $code -eq 0 ] && echo true || echo false)" \
-                > "$GITHUB_WORKSPACE/.code-futures-obs/node-test.json"
+              # Serialised with jq rather than interpolated into a
+              # JSON-shaped printf. A script such as
+              # `jest --testMatch="**/*.test.js"` contains quotes, and an
+              # unescaped one produces invalid JSON that `observe.load()`
+              # discards in silence.
+              jq -n --arg s "$script" --arg passed "$([ $code -eq 0 ] && echo true || echo false)" \
+                '{probe:"test.unit",outcome:"enforced",tool:"npm test",detail:("ran: " + $s),blocking:"false",passed:$passed}' \
+                > "$obs"
               ;;
           esac
 
@@ -251,7 +304,7 @@ jobs:
         if: always()
         with:
           name: cf-obs-node
-          path: .code-futures-obs/
+          path: code-futures-obs/
           if-no-files-found: ignore
 
   # --------------------------------------------------------------------
@@ -261,6 +314,9 @@ jobs:
     if: needs.detect.outputs.java == 'true'
     runs-on: ubuntu-latest
     continue-on-error: true
+    defaults:
+      run:
+        working-directory: ${{ needs.detect.outputs.java_dir }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-java@v4
@@ -268,7 +324,7 @@ jobs:
           distribution: temurin
           java-version: "21"
 
-      - run: mkdir -p .code-futures-obs
+      - run: mkdir -p "$GITHUB_WORKSPACE/code-futures-obs"
 
       - name: Build and test
         continue-on-error: true
@@ -293,13 +349,13 @@ jobs:
           fi
           printf '{"probe":"test.unit","outcome":"enforced","tool":"%s","detail":"tests run through the build aggregate","blocking":"false","passed":"%s"}\n' \
             "$tool" "$([ $code -eq 0 ] && echo true || echo false)" \
-            > .code-futures-obs/java-test.json
+            > "$GITHUB_WORKSPACE/code-futures-obs"/java-test.json
 
       - uses: actions/upload-artifact@v4
         if: always()
         with:
           name: cf-obs-java
-          path: .code-futures-obs/
+          path: code-futures-obs/
           if-no-files-found: ignore
 
   # --------------------------------------------------------------------
@@ -309,13 +365,16 @@ jobs:
     if: needs.detect.outputs.rust == 'true'
     runs-on: ubuntu-latest
     continue-on-error: true
+    defaults:
+      run:
+        working-directory: ${{ needs.detect.outputs.rust_dir }}
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt, clippy
 
-      - run: mkdir -p .code-futures-obs
+      - run: mkdir -p "$GITHUB_WORKSPACE/code-futures-obs"
 
       - name: Lint, format, test
         continue-on-error: true
@@ -326,17 +385,17 @@ jobs:
           cargo test; test=$?
           {
             printf '{"probe":"lint","language":"Rust","outcome":"enforced","tool":"clippy","detail":"cargo clippy","blocking":"false","passed":"%s"}\n' "$([ $lint -eq 0 ] && echo true || echo false)"
-          } > .code-futures-obs/rust-lint.json
+          } > "$GITHUB_WORKSPACE/code-futures-obs"/rust-lint.json
           printf '{"probe":"format","language":"Rust","outcome":"enforced","tool":"rustfmt","detail":"cargo fmt --check","blocking":"false","passed":"%s"}\n' \
-            "$([ $fmt -eq 0 ] && echo true || echo false)" > .code-futures-obs/rust-format.json
+            "$([ $fmt -eq 0 ] && echo true || echo false)" > "$GITHUB_WORKSPACE/code-futures-obs"/rust-format.json
           printf '{"probe":"test.unit","outcome":"enforced","tool":"cargo test","detail":"cargo test","blocking":"false","passed":"%s"}\n' \
-            "$([ $test -eq 0 ] && echo true || echo false)" > .code-futures-obs/rust-test.json
+            "$([ $test -eq 0 ] && echo true || echo false)" > "$GITHUB_WORKSPACE/code-futures-obs"/rust-test.json
 
       - uses: actions/upload-artifact@v4
         if: always()
         with:
           name: cf-obs-rust
-          path: .code-futures-obs/
+          path: code-futures-obs/
           if-no-files-found: ignore
 
   # --------------------------------------------------------------------
@@ -376,6 +435,31 @@ jobs:
       - uses: github/codeql-action/analyze@v3
         if: steps.langs.outputs.langs != ''
 
+      - name: Record that SAST ran
+        if: always()
+        # Without this the artifact reports `security.sast` as unreadable even
+        # when the analysis above succeeded: `code-futures ci` sees only local
+        # evidence, and nothing local can observe a CodeQL run.
+        run: |
+          set -euo pipefail
+          mkdir -p "$GITHUB_WORKSPACE/code-futures-obs"
+          langs='${{ steps.langs.outputs.langs }}'
+          if [ -z "$langs" ]; then
+            jq -n '{probe:"security.sast",outcome:"absent",detail:"no source CodeQL analyses was found"}' \
+              > "$GITHUB_WORKSPACE/code-futures-obs"/sast.json
+          else
+            jq -n --arg langs "$langs" \
+              '{probe:"security.sast",outcome:"enforced",tool:"CodeQL",detail:("CodeQL analysed " + $langs),blocking:"false"}' \
+              > "$GITHUB_WORKSPACE/code-futures-obs"/sast.json
+          fi
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: cf-obs-sast
+          path: code-futures-obs/
+          if-no-files-found: ignore
+
   # --------------------------------------------------------------------
   summarize:
     name: summarize
@@ -384,6 +468,10 @@ jobs:
     # check would produce no artifact and disappear from its own report,
     # which makes a failure look identical to non-adoption.
     if: always()
+    # `if: always()` only makes this job *start* after a failed dependency. It
+    # does not make this job's own failures advisory, and a checkout or install
+    # failure here would fail the caller.
+    continue-on-error: true
     runs-on: ubuntu-latest
     steps:
       - name: Check out the repository under analysis

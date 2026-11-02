@@ -172,7 +172,7 @@ jobs:
 | `node` | Your own `lint` and `test` scripts — skipped with no `package.json` |
 | `java` | `./gradlew build` or `mvn test` |
 | `rust` | `cargo clippy`, `cargo fmt --check`, `cargo test` |
-| `sast` | CodeQL, for the languages it finds |
+| `sast` | CodeQL, for the languages it finds, and records that it ran |
 | `summarize` | Writes `code-futures.json` and a summary table |
 
 ### What it does *not* do

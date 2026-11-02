@@ -61,15 +61,35 @@ def load(directory: Path) -> list[ProbeResult]:
 
 
 def _one(frag: object) -> ProbeResult | None:
+    """One fragment, or `None` if it is not usable.
+
+    Field *types* are checked before anything is looked up or constructed.
+    Fragments are written by shell scripts, so a field can be any JSON type,
+    and an unhashable one raised `TypeError` at the membership check below --
+    which escaped `load()` and discarded every healthy fragment alongside it.
+    """
     if not isinstance(frag, dict):
         return None
     probe_id = frag.get("probe")
-    if probe_id not in PROBES_BY_ID:
+    if not isinstance(probe_id, str) or probe_id not in PROBES_BY_ID:
+        return None
+    outcome_raw = frag.get("outcome")
+    if not isinstance(outcome_raw, str):
         return None
     try:
-        outcome = Outcome(frag.get("outcome", ""))
+        outcome = Outcome(outcome_raw)
     except ValueError:
         return None
+
+    language = frag.get("language")
+    if language is not None and not isinstance(language, str):
+        return None
+    tool = frag.get("tool")
+    if tool is not None and not isinstance(tool, str):
+        return None
+    evidence_raw = frag.get("evidence", [])
+    if not isinstance(evidence_raw, list):
+        evidence_raw = []
 
     probe = PROBES_BY_ID[probe_id]
     # A job cannot claim a rung the probe does not have. Without this a
@@ -81,34 +101,74 @@ def _one(frag: object) -> ProbeResult | None:
     attributes = {
         k: str(v)
         for k, v in frag.items()
-        if k not in ("probe", "outcome", "tool", "detail", "language", "evidence") and v is not None
+        if k not in ("probe", "outcome", "tool", "detail", "language", "evidence")
+        and isinstance(v, (str, int, float, bool))
     }
     try:
         return ProbeResult(
             id=probe_id,
             outcome=outcome,
-            language=frag.get("language") if probe.per_language else None,
-            tool=frag.get("tool"),
+            language=language if probe.per_language else None,
+            tool=tool,
             detail=str(frag.get("detail", "")),
-            evidence=[str(e) for e in frag.get("evidence", []) if e],
+            evidence=[str(e) for e in evidence_raw if e],
             attributes=attributes,
             source="ci",
         )
-    except ValueError:
+    except (ValueError, TypeError):
         return None
+
+
+# How strongly an outcome speaks, for combining two observations of one probe.
+# `UNREADABLE` is weakest: a job that could not tell must never displace one
+# that could.
+_STRENGTH = {Outcome.ENFORCED: 3, Outcome.PRESENT: 2, Outcome.ABSENT: 1, Outcome.UNREADABLE: 0}
+
+
+def _combine(a: ProbeResult, b: ProbeResult) -> ProbeResult:
+    """Two observations of one probe, resolved by strength of evidence.
+
+    Needed because four language jobs all report `test.unit`, which is a
+    single-answer probe. Without this the last fragment read wins, and
+    fragments are read in filename order -- so `java-test.json` sorting
+    before `node-test.json` let Node's `absent` placeholder overwrite a real
+    Java test run. Filename order was deciding what a repository is.
+
+    Strongest wins, because the claims are not symmetric: a job that watched
+    tests run establishes that tests run, while a job finding none in *its*
+    language establishes nothing about the others.
+    """
+    strong, weak = (a, b) if _STRENGTH[a.outcome] >= _STRENGTH[b.outcome] else (b, a)
+    for e in weak.evidence:
+        if e not in strong.evidence:
+            strong.evidence.append(e)
+    # Keep the weaker finding visible rather than discarding it: "pytest ran,
+    # and the Node test script is an echo" is two facts, not a contradiction.
+    if weak.detail and weak.detail not in strong.detail:
+        strong.detail = f"{strong.detail} ({weak.tool or 'elsewhere'}: {weak.detail})".strip()
+    return strong
 
 
 def merge(inferred: list[ProbeResult], observed: list[ProbeResult]) -> list[ProbeResult]:
     """Combine inference with observation, observation winning.
 
-    Keyed by `(probe, language)` so a polyglot repository keeps both answers.
+    Keyed by `(probe, language)` so a polyglot repository keeps both answers
+    for a per-language probe.
 
     The direction is not arbitrary. A CI run can report that a test command
     ran and what it did; nothing read from outside the run can establish
     that. Where the two disagree, the one that watched is the better
     evidence.
+
+    Two *observations* of the same probe are combined by strength rather than
+    by order -- see `_combine`.
     """
     merged = {r.key: r for r in inferred}
+    seen_observed: set[tuple[str, str | None]] = set()
     for r in observed:
-        merged[r.key] = r
+        if r.key in seen_observed:
+            merged[r.key] = _combine(merged[r.key], r)
+        else:
+            merged[r.key] = r
+            seen_observed.add(r.key)
     return list(merged.values())
