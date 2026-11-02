@@ -332,6 +332,13 @@ def _actionable(report: RepositoryReport) -> list[tuple[int, ProbeResult, dict]]
         # unidentifiable case is actionable.
         if r.id == "practice.license" and r.attributes.get("spdx"):
             continue
+        # A README covering all four sections is `present` -- the probe has no
+        # higher rung -- so without this it matched the remediation table's
+        # `present` clause and the report recommended "completing the README"
+        # directly beneath a line saying it was complete, displacing a real
+        # finding from a list only four items long.
+        if r.id == "practice.readme_sections" and not r.attributes.get("missing"):
+            continue
         out.append((spec["rank"], r, spec))
     out.sort(key=lambda x: (x[0], x[1].language or ""))
     return out
@@ -340,6 +347,22 @@ def _actionable(report: RepositoryReport) -> list[tuple[int, ProbeResult, dict]]
 def _lead_item(report: RepositoryReport) -> dict | None:
     got = _actionable(report)
     return got[0][2] if got else None
+
+
+def _probe_list(bad: list[ProbeResult], show: int = 4) -> str:
+    """Name the unreadable probes, saying so when the list is truncated.
+
+    An earlier version said "Eight probes unreadable" and then named four,
+    which reads as a complete list and is not one.
+    """
+    if not bad:
+        return ""
+    names = [f"`{r.id}`" for r in bad[:show]]
+    rest = len(bad) - len(names)
+    joined = _join(names)
+    if rest:
+        return f"{joined}, and {_spell(rest) if rest <= 10 else rest} more"
+    return joined
 
 
 def _summary(report: RepositoryReport) -> str:
@@ -414,7 +437,7 @@ def _summary(report: RepositoryReport) -> str:
             S.SUMMARY_UNREADABLE.format(
                 count=_spell(len(bad)).capitalize(),
                 s="" if len(bad) == 1 else "s",
-                probes=_join([f"`{r.id}`" for r in bad[:4]]),
+                probes=_probe_list(bad),
             ),
         ]
     return "\n".join(parts)

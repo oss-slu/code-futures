@@ -14,7 +14,12 @@ dependencies = ["PyYAML>=6.0"]
 code-futures = "code_futures.cli:main"
 
 [project.optional-dependencies]
-dev = ["pytest>=8.0", "ruff>=0.6"]
+# Pinned, not floored. A floor means a future ruff release can fail this
+# repository's lint with no change to its code -- the same argument the
+# reusable workflow makes for the tools it installs. The runtime dependency
+# below keeps a floor, because a library that pins its dependencies exactly
+# dictates to everything that installs it.
+dev = ["pytest==9.2.0", "ruff==0.14.2"]
 
 [build-system]
 requires = ["setuptools>=68"]

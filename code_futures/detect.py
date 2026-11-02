@@ -125,14 +125,24 @@ def resolve_script(scripts: dict[str, str], command: str) -> tuple[str, bool]:
     return body, not bool(_HOLLOW_SCRIPT.search(body))
 
 
+# Directory suffixes that mark generated output. Matched as suffixes because
+# the directory name carries the package name: `mithridatium.egg-info`.
+#
+# Found by reading a real report rather than by reasoning: the strongest
+# change coupling in it was `PKG-INFO` against `SOURCES.txt`, two files inside
+# an `.egg-info` directory, which is build output regenerated on every
+# install. The headline structural finding was an artefact.
+VENDORED_SUFFIXES: tuple[str, ...] = (".egg-info", ".dist-info", ".egg-link")
+
+
 def is_vendored(path: str) -> bool:
-    """Whether a path sits inside somebody else's tree.
+    """Whether a path sits inside somebody else's tree, or is generated.
 
     The single most important filter in this module. Without it one
     repository's committed virtualenv makes it the best-tested project in the
     organisation.
     """
-    return any(seg in VENDORED for seg in path.split("/"))
+    return any(seg in VENDORED or seg.endswith(VENDORED_SUFFIXES) for seg in path.split("/"))
 
 
 @dataclass(frozen=True)
@@ -444,6 +454,31 @@ def _strip_comments(text: str) -> str:
     return "\n".join(line for line in text.splitlines() if not line.lstrip().startswith("#"))
 
 
+_WORKFLOW_CALL = re.compile(r"^\s*workflow_call\s*:", re.M)
+_OTHER_TRIGGER = re.compile(r"^\s*(push|pull_request|schedule|workflow_dispatch|release)\s*:", re.M)
+
+
+def is_called_only(workflow: str) -> bool:
+    """Whether a workflow only ever runs when another repository calls it.
+
+    Such a file describes what it does *for callers*, not what this
+    repository does, so its commands are not this repository's practice.
+
+    Found by running Code Futures against Code Futures. Its own reusable
+    workflow contains `clang-tidy`, `eslint` and `cargo clippy` as real
+    `run:` lines -- conditionally, for whichever stack a caller turns out to
+    have -- and the report duly credited a Python-only repository with
+    enforced linting in three languages it does not contain.
+
+    The rule is general rather than a special case for this file: a
+    `workflow_call`-only workflow is a library, and reading a library's
+    contents as the host's behaviour is the same error as counting a vendored
+    dependency's tests.
+    """
+    body = _strip_comments(workflow)
+    return bool(_WORKFLOW_CALL.search(body)) and not _OTHER_TRIGGER.search(body)
+
+
 def run_lines(workflow: str) -> list[str]:
     """Every shell command a workflow runs.
 
@@ -500,7 +535,7 @@ def detect_runs(workflows: dict[str, str], scripts: dict[str, str] | None = None
     seen: set[tuple[str, str, str]] = set()
 
     for path, text in workflows.items():
-        if is_vendored(path):
+        if is_vendored(path) or is_called_only(text):
             continue
 
         # super-linter first: its findings come from the env block, not a

@@ -209,6 +209,20 @@ _CAPABILITY_PROBES = (
 )
 
 
+def readme_section_result(read_file, paths: list[str] | None) -> ProbeResult:
+    """Whether the README covers the four sections the conventions expect.
+
+    Wired here as well as in the local path. It existed only there, so every
+    remote report said "No collector reported on this probe" -- a probe that
+    is only ever unreadable is worse than no probe.
+    """
+    candidates = ("README.md", "README.rst", "README")
+    name = next((c for c in candidates if paths and c in paths), None)
+    if name is None:
+        return readme_result(None, source="capability", absent_reason="There is no README to read.")
+    return readme_result(read_file(name), source="capability")
+
+
 def capabilities(
     repository: str,
     *,
@@ -294,6 +308,8 @@ def capabilities(
 
 _SCORECARD_PROBES = {
     "SAST": "security.sast",
+    "Code-Review": "review.practiced",
+    "Vulnerabilities": "deps.known_vulnerabilities",
     "Security-Policy": "practice.security_policy",
     "Token-Permissions": "security.token_permissions",
     "Dangerous-Workflow": "security.workflow_safety",
@@ -349,16 +365,52 @@ def scorecard(repository: str, cfg: Config) -> list[ProbeResult]:
     except json.JSONDecodeError:
         return _all_unreadable("Scorecard output could not be parsed.")
 
+    return scorecard_results(data)
+
+
+def scorecard_results(data: dict) -> list[ProbeResult]:
+    """Scorecard's JSON, as probe results.
+
+    Separate from the subprocess so the mapping can be tested against real
+    Scorecard output without one. Two of the three special cases below exist
+    because a check's score does not mean what the probe asks, and both were
+    wrong in a way no run would have surfaced.
+    """
     out: list[ProbeResult] = []
     for check in data.get("checks", []):
         probe_id = _SCORECARD_PROBES.get(check.get("name", ""))
         if not probe_id:
             continue
-        outcome, attrs = _scorecard_outcome(int(check.get("score", -1)), check.get("reason", ""))
+        try:
+            score = int(check.get("score", -1))
+        except (TypeError, ValueError):
+            score = -1
+        outcome, attrs = _scorecard_outcome(score, check.get("reason", ""))
+        detail = ""
         if probe_id == "practice.security_policy" and outcome is Outcome.ENFORCED:
             outcome = Outcome.PRESENT  # nothing runs a SECURITY.md
             attrs = {"path": "SECURITY.md"}
-        out.append(ProbeResult(id=probe_id, outcome=outcome, attributes=attrs, source="scorecard"))
+        elif probe_id == "deps.known_vulnerabilities" and score >= 0:
+            # Inverted: a 10 means no advisories were found. `present` here
+            # means advisories exist, which is why the probe is named for the
+            # vulnerabilities rather than for their absence.
+            outcome = Outcome.ABSENT if score >= 10 else Outcome.PRESENT
+            # Scorecard's sentence, verbatim, as the detail. Put in
+            # `attributes` it reached nothing: the template for this probe
+            # wants `{count}`, the fill failed, and the finding rendered as
+            # the generic "Present in the repository. No CI step invokes it"
+            # -- a sentence about a CI step, attached to a vulnerability
+            # count, with Scorecard's evidence dropped.
+            attrs, detail = {}, check.get("reason", "")
+        elif probe_id == "review.practiced" and score >= 0:
+            # A proportion of recent changes, not a state. Reported as the
+            # rung it reaches, with Scorecard's own sentence as the detail --
+            # the interesting finding is disagreement with `review.required`.
+            outcome = Outcome.ENFORCED if score >= 7 else Outcome.PRESENT if score > 0 else Outcome.ABSENT
+            attrs, detail = {}, check.get("reason", "")
+        out.append(
+            ProbeResult(id=probe_id, outcome=outcome, attributes=attrs, detail=detail, source="scorecard")
+        )
     return out
 
 
@@ -378,6 +430,113 @@ def _all_unreadable(reason: str) -> list[ProbeResult]:
 # --- SonarQube Cloud --------------------------------------------------------
 
 _SONAR_PROBES = ("quality.project", "quality.gate", "quality.hotspots_reviewed")
+
+# Duplication and cognitive complexity are the two measurements this tool
+# cannot make itself. The indentation proxy in `structure.py` sees nesting and
+# nothing else, and duplication needs real token comparison.
+#
+# Both arrive free: SonarQube Cloud's Automatic Analysis computes them on
+# import, with no workflow and no per-repository configuration. That is why
+# there is no Sonar job in the reusable workflow -- see the comment where it
+# used to be.
+_SONAR_METRICS = "duplicated_lines_density,duplicated_blocks,cognitive_complexity,files"
+
+# Sonar's own default quality gate fires at 3% on new code, so a repository
+# under that is at a level its own tooling calls acceptable. Reporting
+# "0.4% duplicated" as a finding trains people to skip the section.
+DUPLICATION_THRESHOLD = 3.0
+
+
+def _measures(key: str, cfg: Config) -> dict[str, str]:
+    """Measures for one component, as `{metric: value}`."""
+    data = _sonar_get(
+        f"https://sonarcloud.io/api/measures/component?component={key}&metricKeys={_SONAR_METRICS}", cfg
+    )
+    if not data:
+        return {}
+    measures = (data.get("component") or {}).get("measures") or []
+    return {m["metric"]: m["value"] for m in measures if "metric" in m and "value" in m}
+
+
+def _most_complex_file(key: str, cfg: Config) -> tuple[str, int] | None:
+    """The single file carrying the most cognitive complexity."""
+    data = _sonar_get(
+        f"https://sonarcloud.io/api/measures/component_tree?component={key}"
+        "&metricKeys=cognitive_complexity&s=metric&metricSort=cognitive_complexity"
+        "&asc=false&qualifiers=FIL&ps=1",
+        cfg,
+    )
+    for component in (data or {}).get("components") or []:
+        for m in component.get("measures") or []:
+            if m.get("metric") == "cognitive_complexity":
+                try:
+                    return component.get("path") or component.get("key", ""), int(float(m["value"]))
+                except (KeyError, ValueError):
+                    return None
+    return None
+
+
+def _structure_from_sonar(key: str, cfg: Config) -> list[ProbeResult]:
+    """The two structural measurements only Sonar can make.
+
+    Absent measures are reported `UNREADABLE`, not `ABSENT`: a project Sonar
+    analysed in a language it does not compute cognitive complexity for has
+    not been shown to be simple.
+    """
+    m = _measures(key, cfg)
+    out: list[ProbeResult] = []
+
+    if "duplicated_lines_density" in m:
+        try:
+            density = float(m["duplicated_lines_density"])
+        except ValueError:
+            density = -1.0
+        if density < 0:
+            out.append(_unreadable_structure("structure.duplication"))
+        elif density >= DUPLICATION_THRESHOLD:
+            out.append(
+                ProbeResult(
+                    id="structure.duplication",
+                    outcome=Outcome.PRESENT,
+                    attributes={"density": f"{density:g}", "blocks": m.get("duplicated_blocks", "0")},
+                    source="sonar",
+                )
+            )
+        else:
+            out.append(ProbeResult(id="structure.duplication", outcome=Outcome.ABSENT, source="sonar"))
+    else:
+        out.append(_unreadable_structure("structure.duplication"))
+
+    total = m.get("cognitive_complexity")
+    top = _most_complex_file(key, cfg) if total else None
+    if total and top:
+        out.append(
+            ProbeResult(
+                id="structure.complexity",
+                outcome=Outcome.PRESENT,
+                attributes={
+                    "total": total,
+                    "files": m.get("files", "?"),
+                    "top": top[0],
+                    "top_value": str(top[1]),
+                },
+                source="sonar",
+            )
+        )
+    elif total == "0":
+        out.append(ProbeResult(id="structure.complexity", outcome=Outcome.ABSENT, source="sonar"))
+    else:
+        out.append(_unreadable_structure("structure.complexity"))
+    return out
+
+
+def _unreadable_structure(pid: str) -> ProbeResult:
+    return ProbeResult(
+        id=pid,
+        outcome=Outcome.UNREADABLE,
+        attributes={"reason": "SonarQube Cloud did not report this measurement."},
+        source="sonar",
+    )
 
 
 def sonar(repository: str, cfg: Config) -> list[ProbeResult]:
@@ -429,6 +588,8 @@ def sonar(repository: str, cfg: Config) -> list[ProbeResult]:
             source="sonar",
         )
     ]
+
+    out.extend(_structure_from_sonar(key, cfg))
 
     gate = _sonar_get(f"{base}/qualitygates/project_status?projectKey={key}", cfg) or {}
     status = (gate.get("projectStatus") or {}).get("status")
@@ -730,6 +891,60 @@ README_SECTIONS = {
 }
 
 
+def markdown_headings(source: str) -> list[str]:
+    """Every Markdown heading in a document, lowercased.
+
+    Markdown only. reStructuredText underlines its headings and plain text
+    has none at all, which is why callers check for an empty result rather
+    than reading it as "this document has no sections".
+    """
+    return [line.lstrip("#").strip().lower() for line in source.splitlines() if line.lstrip().startswith("#")]
+
+
+def readme_result(body: str | None, *, source: str, absent_reason: str = "") -> ProbeResult:
+    """The README-sections finding, from a README body.
+
+    One function for the local and the remote path. They were two
+    near-identical blocks, and every change to this logic has had to be made
+    in both -- including the two below.
+
+    **A heading style we cannot parse is `UNREADABLE`.** `README.rst` and a
+    bare `README` are both accepted as READMEs, and neither uses `#`, so a
+    complete reStructuredText README was reported as covering none of the
+    four sections and the report recommended writing sections that were
+    already there. Parsing rst properly is work; claiming a gap we did not
+    establish is wrong, and the second is the one that costs a reader their
+    trust in the rest of the document.
+    """
+    if body is None:
+        return ProbeResult(
+            id="practice.readme_sections",
+            outcome=Outcome.UNREADABLE,
+            attributes={"reason": absent_reason or "The README could not be read."},
+            source=source,
+        )
+    if not markdown_headings(body):
+        return ProbeResult(
+            id="practice.readme_sections",
+            outcome=Outcome.UNREADABLE,
+            attributes={"reason": "The README has no Markdown headings, so its sections could not be read"},
+            source=source,
+        )
+    found, missing = readme_sections(body)
+    # `missing` is recorded either way, empty when there is nothing missing.
+    # `_actionable()` reads it to decide, so a complete README stops being
+    # ranked as "completing the README" while keeping the schema's `PRESENT`
+    # ceiling -- the probe has no `enforced` rung, because nothing enforces
+    # prose.
+    return ProbeResult(
+        id="practice.readme_sections",
+        outcome=Outcome.PRESENT,
+        attributes={"found": str(len(found)), "missing": ", ".join(missing)},
+        detail="" if missing else "Covers all four expected sections.",
+        source=source,
+    )
+
+
 def readme_sections(source: str | None) -> tuple[list[str], list[str]]:
     """Which expected README sections are present, and which are missing.
 
@@ -739,9 +954,7 @@ def readme_sections(source: str | None) -> tuple[list[str], list[str]]:
     """
     if source is None:
         return [], list(README_SECTIONS)
-    headings = [
-        line.lstrip("#").strip().lower() for line in source.splitlines() if line.lstrip().startswith("#")
-    ]
+    headings = markdown_headings(source)
     found, missing = [], []
     for name, aliases in README_SECTIONS.items():
         if any(any(a in h for a in aliases) for h in headings):
@@ -785,34 +998,13 @@ def local_practice(paths: list[str], read_file) -> list[ProbeResult]:
     )
 
     readme = next((c for c in _LOCAL_FILES["practice.readme"] if c in have), None)
-    found, missing = readme_sections(read_file(readme) if readme else None)
-    if not readme:
-        out.append(
-            ProbeResult(
-                id="practice.readme_sections",
-                outcome=Outcome.UNREADABLE,
-                attributes={"reason": "There is no README to read."},
-                source="local",
-            )
+    out.append(
+        readme_result(
+            read_file(readme) if readme else None,
+            source="local",
+            absent_reason="There is no README to read.",
         )
-    elif missing:
-        out.append(
-            ProbeResult(
-                id="practice.readme_sections",
-                outcome=Outcome.PRESENT,
-                attributes={"found": str(len(found)), "missing": ", ".join(missing)},
-                source="local",
-            )
-        )
-    else:
-        out.append(
-            ProbeResult(
-                id="practice.readme_sections",
-                outcome=Outcome.PRESENT,
-                detail="Covers all four expected sections.",
-                source="local",
-            )
-        )
+    )
 
     wf = [p for p in paths if p.startswith(".github/workflows/") and p.endswith((".yml", ".yaml"))]
     out.append(

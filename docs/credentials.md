@@ -56,27 +56,64 @@ The code is already public, so this discloses nothing new. It is still worth tel
 
 ### Creating the organisation
 
-1. Go to **<https://sonarcloud.io>** and **Log in with GitHub**.
-2. Choose **Import an organization from GitHub**.
+Corrected against the real flow on 2026-11-02; the earlier version of this
+section guessed at the UI and got three things wrong.
+
+1. Start at the **[SonarQube Cloud product page](https://www.sonarsource.com/products/sonarqube/cloud/)** and select **Start now**. Not the GitHub Marketplace, and not sonarcloud.io directly.
+2. Choose **GitHub** from the DevOps platform list, and authenticate.
 3. Pick **oss-slu**. You will be asked to install the **SonarQube Cloud** GitHub App. This requires organisation owner permission, which you have.
 4. When the app asks which repositories to grant access to, choose **All repositories**. Selecting individually means revisiting this every time a new product starts.
 5. Choose the **Free plan**. It is the one that covers public repositories.
 6. Note the **organization key** it assigns — probably `oss-slu`. You need it for the config file.
 
-### Turning on automatic provisioning
+### Importing what exists, then provisioning what comes next
 
-This is what makes 29 projects a setting rather than 29 manual steps.
+**These are two separate actions and neither substitutes for the other.** An
+earlier version of this section said automatic provisioning would bring in the
+existing repositories. It does not: the documentation is explicit that "it
+applies to repositories added after you enable it, not existing repositories."
 
-1. In the organisation, go to **Administration → Organization settings**.
-2. Find **Provisioning** (sometimes **Repository binding**) and enable **Automatic provisioning**.
-3. Use **bulk import** to bring in the repositories that already exist. New repositories are then provisioned when they are created.
+**Bulk import, for the repositories you already have.** `+` → **Analyze new
+project**, select the organisation, and with no repository selected on the left
+a **Bulk import all repositories** section appears. Choose **Import all
+repositories**, pick a new-code definition, **Create project**. Already-imported
+repositories are skipped, so it is safe to re-run.
+
+Importing creates the projects. The GitHub App also runs an initial analysis on
+import, so there is usable data before any CI has run.
+
+**Automatic provisioning, for everything created from now on.** This is a
+SonarQube Cloud setting with a GitHub prerequisite, which is why it reads
+ambiguously:
+
+| Where | What |
+|---|---|
+| SonarQube Cloud | **Administration → Organization settings → Organization binding**, enable **"Automatically import new GitHub repositories"** |
+| GitHub | The app's **Repository Access** must be **All repositories**, or there is nothing for it to find |
 
 ### Generating the token
 
-1. Click your avatar → **My Account** → **Security**.
-2. Under **Generate Tokens**, give it a name — `code-futures` works.
-3. For **Type**, choose **Organization Analysis Token** and select **oss-slu**.
-4. **Generate**, and copy it immediately.
+**Not a Scoped Organization Token.** Those need a Team or Enterprise plan —
+"Free does not include Scoped Organization Tokens" — and this program is on the
+free plan. An earlier version of this section specified one.
+
+Use a **personal token**:
+
+1. **<https://sonarcloud.io/account/security>**, which is more reliable than
+   navigating; the menu label has moved between documentation versions.
+2. Name it something recognisable in a year — `code-futures org analysis`.
+3. Generate, and copy it immediately. It is shown once.
+4. Note the expiry. An expired token fails in a way that looks like a
+   permissions problem, which is what `code-futures doctor` exists to catch.
+
+One personal token covers every project: it carries its owner's permissions, and
+organisation-level *Execute analysis* permission reaches all projects, current
+and future.
+
+**The trade this accepts.** A personal token is tied to a person rather than to
+the institution, so it dies with that person's access — the succession concern
+`slu/CLAUDE.md` raises. Institutional custody here costs a paid plan, so this is
+a deliberate acceptance rather than an oversight.
 
 **Why an organisation-scoped token rather than per-project.** Sonar's own documentation prefers project tokens, on the grounds that a leaked token then compromises one project rather than all of them. That argument carries less weight here: the source is already public, and an analysis token grants *submitting* analysis results rather than reading anything. The realistic damage from a leak is poisoned quality data. One organisation token for 29 public repositories is the better trade, and it means no team manages a secret.
 

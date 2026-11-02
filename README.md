@@ -157,13 +157,31 @@ jobs:
 
 **Copy the `permissions:` block exactly.** Omitting it is the most likely reason a first attempt fails. A reusable workflow cannot grant itself more permission than the workflow calling it, so `security-events: write` must be declared *in your repository*. Without it the security scanning job fails, and the error does not obviously point back here.
 
+**Adding it to a workflow you already have?** Put the permissions on the *job* rather than at the top of the file:
+
+```yaml
+jobs:
+  # ...your jobs, unchanged...
+
+  code-futures:
+    permissions:
+      contents: read
+      security-events: write
+    uses: oss-slu/code-futures/.github/workflows/code-futures.yml@v1.0.0
+    secrets: inherit
+```
+
+If that workflow declares no top-level `permissions:` today, its jobs inherit the default — and adding a top-level block would restrict them too. Tightening unrelated jobs as a side effect of adding a report is not a trade worth making. Whatever triggers that workflow triggers this, so pick one that runs at least once a sprint.
+
 **Nothing will fail your build.** Every job is advisory, and that is deliberate rather than timid: a build that breaks the day you adopt a quality tool teaches you that quality tools are an obstacle. Making a check blocking is a later decision, and section 7 of the guidebook covers what it costs.
 
 **There is no stack to declare.** Each job looks for its own manifest and skips when it finds none. A repository that is Python *and* React gets both toolchains rather than having to pick one.
 
 **Java has no job.** The detector still recognises Checkstyle, Spotless, JUnit and the rest, so a snapshot of a Java repository reports on it — but no active project in this portfolio is Java, and an untested workflow path is worse than an absent one. Add the job when a Java project arrives.
 
-**Pin the exact version.** `@v1.0.0` is immutable and will never change under you. The common convention of pinning a moving major tag like `@v1` is avoided here deliberately: a moving tag silently changes the CI of every repository using it, and means nobody can say what ran last Tuesday. The cost is that fixes need you to bump the tag, and you will be told when there is one.
+**Pin the exact version.** The common convention of pinning a moving major tag like `@v1` is avoided here deliberately: a moving tag silently changes the CI of every repository using it, and means nobody can say what ran last Tuesday. The cost is that fixes need you to bump the tag, and you will be told when there is one.
+
+`v1.0.0` was re-pointed once, on 2026-11-02, before any team had adopted it — the first real run of it against a repository found that both scanners it invoked were being refused by the platform's own automatic equivalents. That was the last free moment to fix it. From adoption onward the tag is frozen, and a fix arrives as a new one.
 
 ### What the workflow does
 
@@ -174,8 +192,23 @@ jobs:
 | `node` | Your own `lint` and `test` scripts — skipped with no `package.json` |
 | `rust` | `cargo clippy`, `cargo fmt --check`, `cargo test` |
 | `cpp` | `clang-format --dry-run`, and `meson test` where a test runner exists |
-| `sast` | CodeQL, for the languages it finds, and records that it ran |
+| `sast` | CodeQL, for the languages it finds — unless GitHub is already scanning |
 | `summarize` | Writes `code-futures.json` and a summary table |
+
+**The tools it installs are pinned**, in one `env:` block at the top of the workflow. An unpinned linter means your report changes when the linter releases, with no change to your code — and two reports are comparable only if the same versions produced them. Your *own* dependencies are deliberately not pinned by us: `requirements.txt` and `npm install` resolve the way you resolve them, because a report on a dependency set nobody builds against is not a report on your repository.
+
+### Where the scanners went
+
+There is no SonarQube job, and the `sast` job stands aside when GitHub's own **default setup** code scanning is enabled. Both are deliberate, and the reason is the same for each: the platform's automatic scanner is already running, and *refuses* a second analysis alongside it.
+
+| Tool | What it says when both are configured |
+|---|---|
+| CodeQL | `analyses from advanced configurations cannot be processed when the default setup is enabled` |
+| SonarQube | `You are running CI analysis while Automatic Analysis is enabled` |
+
+A job that duplicates them earns a failed check and a red cross on every pull request while changing nothing about whether the code is scanned. So `sast` asks whether default setup is on and defers to it, and Sonar's results are read over its API instead of produced in CI.
+
+The automatic versions are also the better half of the trade for a team adopting CI this week: no configuration, no scanner step, nothing to maintain, and both decorate pull requests on their own. What CI analysis would add is test coverage ingestion, which needs a coverage report the repository has to produce first.
 
 ### What it does *not* do
 
@@ -248,7 +281,7 @@ PyYAML, to read the orchestration tooling's practice snapshot. Everything else i
 
 - **Vendored upstream source is not detected.** No path convention distinguishes it, and guessing risks excluding real source, which is the worse error.
 - **Several config markers are unexercised.** Checkstyle, PMD, SpotBugs, Spotless, JaCoCo, tarpaulin and cargo-mutants matched nothing in the repositories this was first built against. Kept for portability, and untested until something fires them.
-- **`structure.duplication` and `structure.complexity` need SonarQube.** They report `unreadable` without it.
+- **`structure.duplication` and `structure.complexity` need SonarQube.** They are the two measurements this tool cannot make itself — the indentation proxy sees nesting and nothing else, and duplication needs real token comparison. Both come from SonarQube Cloud's Automatic Analysis, which computes them on import with no workflow and no per-repository configuration. Without a Sonar token they report `unreadable`.
 
 ---
 

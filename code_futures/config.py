@@ -17,6 +17,11 @@ DEFAULT_PATH = Path.home() / ".config" / "code-futures" / "config.toml"
 
 DEFAULT_CHECKS = (
     "SAST",
+    # Added after a real report showed `review.practiced` and
+    # `deps.known_vulnerabilities` permanently unreadable: the probes existed
+    # and nothing requested the checks that answer them.
+    "Code-Review",
+    "Vulnerabilities",
     "Security-Policy",
     "Token-Permissions",
     "Dangerous-Workflow",

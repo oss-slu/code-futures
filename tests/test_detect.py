@@ -356,3 +356,70 @@ jobs:
     def test_a_commented_out_validator_is_not_credited(self):
         wf = self.WF.replace("VALIDATE_CLANG_FORMAT: true", "# VALIDATE_CLANG_FORMAT: true")
         assert detect.detect_runs({".github/workflows/super-linter.yml": wf}) == []
+
+
+class TestCalledOnlyWorkflows:
+    """A `workflow_call`-only workflow describes what it does for callers,
+    not what its host repository does.
+
+    Found by running Code Futures against Code Futures. Its own reusable
+    workflow contains `clang-tidy`, `eslint` and `cargo clippy` as real
+    `run:` lines -- conditionally, for whichever stack a caller has -- and
+    the report credited a Python-only repository with enforced linting in
+    three languages it does not contain.
+    """
+
+    REUSABLE = """
+on:
+  workflow_call:
+jobs:
+  rust:
+    steps:
+      - run: cargo clippy --all-targets -- -D warnings
+  cpp:
+    steps:
+      - run: clang-tidy src/a.cpp
+"""
+    OWN = """
+on:
+  pull_request:
+  push:
+    branches: [main]
+jobs:
+  lint:
+    steps:
+      - run: ruff check .
+"""
+
+    def test_a_reusable_workflow_is_not_the_host_s_practice(self):
+        assert detect.is_called_only(self.REUSABLE)
+        assert detect.detect_runs({".github/workflows/reusable.yml": self.REUSABLE}) == []
+
+    def test_an_ordinary_workflow_still_counts(self):
+        assert not detect.is_called_only(self.OWN)
+        got = detect.detect_runs({".github/workflows/ci.yml": self.OWN})
+        assert [(f.language, f.tool) for f in got] == [("Python", "ruff")]
+
+    def test_a_workflow_both_called_and_triggered_still_counts(self):
+        """Dual-purpose workflows exist, and their push trigger means they
+        really do run here."""
+        both = "on:\n  workflow_call:\n  push:\n" + "jobs:\n  x:\n    steps:\n      - run: ruff check .\n"
+        assert not detect.is_called_only(both)
+        assert detect.detect_runs({"w.yml": both})
+
+    def test_a_commented_out_trigger_does_not_rescue_it(self):
+        wf = self.REUSABLE.replace("on:\n  workflow_call:", "on:\n  workflow_call:\n  # push:")
+        assert detect.is_called_only(wf)
+
+    def test_the_caller_side_is_unaffected(self):
+        """What a team adds is a `uses:` line, which names no tool, so their
+        own workflows are read exactly as before."""
+        caller = """
+on:
+  pull_request:
+jobs:
+  code-futures:
+    uses: oss-slu/code-futures/.github/workflows/code-futures.yml@v1.0.0
+"""
+        assert not detect.is_called_only(caller)
+        assert detect.detect_runs({".github/workflows/code-futures.yml": caller}) == []

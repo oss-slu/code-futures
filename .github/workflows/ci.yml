@@ -17,6 +17,11 @@ on:
   push:
     branches: [main]
 
+# `contents: read` only. `security-events: write` sits on the two jobs that
+# call the reusable workflow, not here -- which is what the README tells
+# teams to do, and what this file was not doing. A workflow-level write
+# grant reaches `lint`, `test` and `self`, none of which need it, so the
+# wrong version of this block quietly widened three unrelated jobs.
 permissions:
   contents: read
 
@@ -86,3 +91,41 @@ jobs:
         with:
           name: code-futures-self-report
           path: self-report.md
+
+  # ------------------------------------------------------------------
+  # Dogfooding: call our own reusable workflow exactly as a team does.
+  #
+  # This is "option 2" from the class activity -- a job added to a workflow
+  # the repository already runs, rather than a new file. It is the path we
+  # recommend, so it is the one worth proving.
+  #
+  # Two callers on purpose.
+  #
+  # `code-futures-released` runs what teams actually run, pinned to the
+  # immutable tag. That is the one whose output matters.
+  #
+  # `code-futures-head` runs this branch, because the tag-pinned caller
+  # cannot test changes made after the tag was cut -- a run of it reported
+  # seven jobs and no `quality`, since `quality` did not exist at v1.0.0.
+  # A reusable workflow pinned immutably cannot verify its own development,
+  # which is a real cost of the tag policy and worth paying visibly rather
+  # than by quietly repointing the released caller.
+  code-futures-released:
+    permissions:
+      contents: read
+      security-events: write
+    uses: oss-slu/code-futures/.github/workflows/code-futures.yml@v1.0.0
+    secrets: inherit
+
+  code-futures-head:
+    permissions:
+      contents: read
+      security-events: write
+    uses: ./.github/workflows/code-futures.yml
+    # Both callers upload artifacts, and artifact names are per-run. Without
+    # a suffix the two sets collide and `gh run download` writes one over the
+    # other silently -- which it did, and sent us chasing a fix that was
+    # working.
+    with:
+      artifact_suffix: -head
+    secrets: inherit
