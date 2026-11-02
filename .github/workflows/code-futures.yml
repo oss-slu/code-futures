@@ -502,19 +502,31 @@ jobs:
       - name: Record that SAST ran
         if: always()
         # Without this the artifact reports `security.sast` as unreadable even
-        # when the analysis above succeeded: `code-futures ci` sees only local
+        # when the analysis succeeded: `code-futures ci` sees only local
         # evidence, and nothing local can observe a CodeQL run.
+        #
+        # The outcome of the analyze step decides what is recorded. A first
+        # version keyed only on whether a language was detected, and a real
+        # run proved the consequence: `analyze` failed, and the artifact
+        # still said "CodeQL analysed python".
         run: |
           set -euo pipefail
           mkdir -p "$GITHUB_WORKSPACE/code-futures-obs"
+          obs="$GITHUB_WORKSPACE/code-futures-obs/sast.json"
           langs='${{ steps.langs.outputs.langs }}'
+          analyzed='${{ steps.analyze.outcome }}'
+          echo "languages=$langs  analyze outcome=$analyzed"
           if [ -z "$langs" ]; then
-            jq -n '{probe:"security.sast",outcome:"absent",detail:"no source CodeQL analyses was found"}' \
-              > "$GITHUB_WORKSPACE/code-futures-obs"/sast.json
-          else
+            jq -n '{probe:"security.sast",outcome:"absent",detail:"CodeQL supports none of the languages found here"}' > "$obs"
+          elif [ "$analyzed" = "success" ]; then
             jq -n --arg langs "$langs" \
-              '{probe:"security.sast",outcome:"enforced",tool:"CodeQL",detail:("CodeQL analysed " + $langs),blocking:"false"}' \
-              > "$GITHUB_WORKSPACE/code-futures-obs"/sast.json
+              '{probe:"security.sast",outcome:"enforced",tool:"CodeQL",detail:("CodeQL analysed " + $langs),blocking:"false"}' > "$obs"
+          else
+            # The scan did not complete. `enforced` would assert an analysis
+            # that did not happen, and `absent` would blame the repository
+            # for our failure.
+            jq -n --arg o "${analyzed:-unknown}" \
+              '{probe:"security.sast",outcome:"unreadable",reason:("The CodeQL analysis did not complete (" + $o + ").")}' > "$obs"
           fi
 
       - uses: actions/upload-artifact@v4
@@ -525,9 +537,68 @@ jobs:
           if-no-files-found: ignore
 
   # --------------------------------------------------------------------
+  quality:
+    name: quality
+    needs: detect
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # SonarQube attributes findings to commits, so it needs history.
+          # On a shallow clone every line looks new and the "new code"
+          # quality gate becomes meaningless.
+          fetch-depth: 0
+
+      - name: Analyse with SonarQube Cloud
+        id: sonar
+        continue-on-error: true
+        # Skipped, not failed, when no token is configured. A Sonar outage or
+        # a rotated credential should degrade to a missing section, never to
+        # a red build in somebody's repository.
+        if: env.SONAR_TOKEN != ''
+        env:
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+        uses: SonarSource/sonarqube-scan-action@v4
+        with:
+          args: >
+            -Dsonar.projectKey=${{ github.repository_owner }}_${{ github.event.repository.name }}
+            -Dsonar.organization=${{ github.repository_owner }}
+
+      - name: Record what analysis found
+        if: always()
+        env:
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+        run: |
+          set -euo pipefail
+          mkdir -p "$GITHUB_WORKSPACE/code-futures-obs"
+          obs="$GITHUB_WORKSPACE/code-futures-obs/quality.json"
+          key="${{ github.repository_owner }}_${{ github.event.repository.name }}"
+          outcome='${{ steps.sonar.outcome }}'
+
+          if [ -z "${SONAR_TOKEN:-}" ]; then
+            # No credential is our gap, not the repository's.
+            jq -n '[{probe:"quality.project",outcome:"unreadable",reason:"No SonarQube Cloud token is configured for this organisation."}]' > "$obs"
+          elif [ "$outcome" != "success" ]; then
+            jq -n --arg o "${outcome:-skipped}" \
+              '[{probe:"quality.project",outcome:"unreadable",reason:("The SonarQube analysis did not complete (" + $o + ").")}]' > "$obs"
+          else
+            jq -n --arg key "$key" \
+              '[{probe:"quality.project",outcome:"enforced",project_key:$key,last_analysis:"this run",detail:("Analysed as " + $key + "."),blocking:"false"}]' > "$obs"
+          fi
+          cat "$obs"
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: cf-obs-quality
+          path: code-futures-obs/
+          if-no-files-found: ignore
+
+  # --------------------------------------------------------------------
   summarize:
     name: summarize
-    needs: [detect, python, node, rust, cpp, sast]
+    needs: [detect, python, node, rust, cpp, sast, quality]
     # **Never remove this.** On success-only, a repository with a failing
     # check would produce no artifact and disappear from its own report,
     # which makes a failure look identical to non-adoption.
