@@ -69,6 +69,8 @@ jobs:
       node: ${{ steps.d.outputs.node }}
       rust: ${{ steps.d.outputs.rust }}
       cpp: ${{ steps.d.outputs.cpp }}
+      node_dir: ${{ steps.d.outputs.node_dir }}
+      cpp_dir: ${{ steps.d.outputs.cpp_dir }}
       python_dir: ${{ steps.d.outputs.python_dir }}
       rust_dir: ${{ steps.d.outputs.rust_dir }}
     steps:
@@ -87,33 +89,31 @@ jobs:
         # configuration than the team's own code.
         run: |
           set -euo pipefail
-          prune='-path ./node_modules -o -path ./.venv -o -path ./venv -o -path ./vendor -o -path ./.git'
-          find_any() {
+          # Pruned by directory *name* at any depth. Matching `-path
+          # ./node_modules` only prunes the top level, so a committed
+          # `backend/.venv` or `frontend/node_modules` was still searched and
+          # a dependency's own manifest could select the stack and the
+          # working directory.
+          prune='-name node_modules -o -name .venv -o -name venv -o -name vendor -o -name third_party -o -name .git -o -name site-packages -o -name target -o -name dist -o -name build'
+
+          # One manifest set per language, used for both the flag and the
+          # directory. They disagreed: the flag accepted `setup.cfg` and
+          # `Pipfile` and the directory lookup did not, so a repository whose
+          # only Python manifest was `backend/Pipfile` ran with the wrong
+          # working directory.
+          PY_M=(-name pyproject.toml -o -name requirements.txt -o -name setup.py -o -name setup.cfg -o -name Pipfile)
+          RS_M=(-name Cargo.toml)
+          CPP_M=(-name .clang-format -o -name .clang-tidy -o -name meson.build -o -name CMakeLists.txt -o -name '*.uproject')
+
+          first() {
             # shellcheck disable=SC2086
-            found=$(find . \( $prune \) -prune -o -type f \( "$@" \) -print -quit)
-            [ -n "$found" ] && echo true || echo false
-          }
-          # Where the manifest actually is. Detection accepted nested
-          # manifests while every job installed and ran from the root, so a
-          # Python project under `backend/` had its dependencies missed, a
-          # Gradle project under `android/` had its tests silently skipped,
-          # and a nested crate was recorded as enforced having found no
-          # manifest at all.
-          dir_of() {
-            # shellcheck disable=SC2086
-            found=$(find . \( $prune \) -prune -o -type f \( "$@" \) -print -quit)
-            [ -n "$found" ] && dirname "$found" || echo .
+            find . -type d \( $prune \) -prune -o -type f \( "$@" \) -print 2>/dev/null | head -1
           }
           {
-            echo "python=$(find_any -name pyproject.toml -o -name requirements.txt -o -name setup.py -o -name setup.cfg -o -name Pipfile)"
-            echo "python_dir=$(dir_of -name pyproject.toml -o -name requirements.txt -o -name setup.py)"
-            echo "rust_dir=$(dir_of -name Cargo.toml)"
-            echo "node=$(find_any -name package.json)"
-            echo "rust=$(find_any -name Cargo.toml)"
-            # C and C++ are recognised from their tooling rather than a
-            # single manifest, because the two projects here share none: one
-            # is Unreal Engine with no CMake at all, the other is meson.
-            echo "cpp=$(find_any -name .clang-format -o -name .clang-tidy -o -name meson.build -o -name CMakeLists.txt -o -name '*.uproject')"
+            m=$(first "${PY_M[@]}");  echo "python=$([ -n "$m" ] && echo true || echo false)"; echo "python_dir=$([ -n "$m" ] && dirname "$m" || echo .)"
+            m=$(first -name package.json); echo "node=$([ -n "$m" ] && echo true || echo false)"; echo "node_dir=$([ -n "$m" ] && dirname "$m" || echo .)"
+            m=$(first "${RS_M[@]}");  echo "rust=$([ -n "$m" ] && echo true || echo false)"; echo "rust_dir=$([ -n "$m" ] && dirname "$m" || echo .)"
+            m=$(first "${CPP_M[@]}"); echo "cpp=$([ -n "$m" ] && echo true || echo false)"; echo "cpp_dir=$([ -n "$m" ] && dirname "$m" || echo .)"
           } | tee -a "$GITHUB_OUTPUT"
 
   # --------------------------------------------------------------------
@@ -202,8 +202,12 @@ jobs:
           echo "$out" | tail -20
           summary=$(echo "$out" | grep -oE '[0-9]+ (passed|failed|error)' | paste -sd', ' - || true)
           if echo "$out" | grep -q 'no tests ran\|collected 0 items'; then
-            printf '{"probe":"test.unit","outcome":"present","tool":"pytest","detail":"pytest ran and collected no tests","blocking":"false"}\n' \
-              > "$GITHUB_WORKSPACE/code-futures-obs"/python-test.json
+            # Emit nothing. We installed pytest ourselves, so finding no
+            # tests says only that the repository has none -- which is what
+            # file inspection already concluded. Writing `present` here would
+            # manufacture a capability out of our own install and overwrite
+            # a correct inference.
+            echo "pytest collected no tests; leaving the inferred finding intact"
           else
             printf '{"probe":"test.unit","outcome":"enforced","tool":"pytest","detail":"%s","blocking":"false","passed":"%s"}\n' \
               "${summary:-pytest ran}" "$([ $code -eq 0 ] && echo true || echo false)" \
@@ -240,8 +244,11 @@ jobs:
         # and right more often than assuming the root.
         run: |
           set -euo pipefail
-          p=$(find . -path ./node_modules -prune -o -name package.json -print | head -1)
-          echo "dir=$(dirname "${p:-./package.json}")" | tee -a "$GITHUB_OUTPUT"
+          # `detect` already resolved this with full exclusions. Searching
+          # again here dropped them, so install, lint and test could run
+          # against a vendored package and publish findings about somebody
+          # else's code as this project's results.
+          echo "dir=${{ needs.detect.outputs.node_dir }}" | tee -a "$GITHUB_OUTPUT"
 
       - name: Install
         continue-on-error: true
@@ -283,9 +290,22 @@ jobs:
             # runs the linter and would otherwise be recorded as a passing
             # unit-test suite, overriding the inference that correctly
             # classifies it as lint.
-            ""|echo*|*"no test specified"*|*"No tests specified"*|*lint*)
+            # Lint-only, matched as a whole command rather than by the
+            # substring `lint` -- which also matched real suites such as
+            # `npm run lint && vitest run` and `jest tests/lint.test.js`,
+            # whose `absent` observation then overrode a correct inference.
+            ""|echo*|*"no test specified"*|*"No tests specified"*|"next lint"|"eslint"|"eslint "*|"npm run lint"|"biome check"*)
               jq -n --arg s "$script" \
                 '{probe:"test.unit",outcome:"absent",detail:("the test script runs no tests: " + $s),blocking:"false"}' \
+                > "$obs"
+              ;;
+            # End-to-end runners reach this branch too, and crediting
+            # `playwright test` as a unit suite contradicts the detector,
+            # which classifies it as `test.e2e`.
+            *playwright*|*cypress*)
+              CI=true npm test --silent; code=$?
+              jq -n --arg s "$script" --arg passed "$([ $code -eq 0 ] && echo true || echo false)" \
+                '{probe:"test.e2e",outcome:"enforced",tool:"npm test",detail:("ran: " + $s),blocking:"false",passed:$passed}' \
                 > "$obs"
               ;;
             *)
@@ -371,7 +391,14 @@ jobs:
         # run themselves.
         run: |
           set +e
-          [ -f .clang-format ] || exit 0
+          # Scoped to wherever the configuration actually is. Requiring one
+          # at the root meant a project under `plugin/` enabled this job and
+          # then silently skipped the check it exists to run.
+          cfg=$(find . -type d \( -name node_modules -o -name .git -o -name third_party -o -name external \) -prune \
+                -o -name .clang-format -print 2>/dev/null | head -1)
+          [ -n "$cfg" ] || exit 0
+          root=$(dirname "$cfg")
+          echo "clang-format configuration: $cfg"
           pip install --quiet clang-format
 
           # Vendored C++ cannot be excluded by directory name here. One repo
@@ -379,7 +406,7 @@ jobs:
           # under `Plugins/`, and checks only its own tree. Respect a
           # `.clang-format-ignore` if present and otherwise skip the paths
           # that are conventionally not ours.
-          git ls-files -- '*.c' '*.cc' '*.cpp' '*.cxx' '*.h' '*.hpp' \
+          git ls-files -- "$root/*.c" "$root/*.cc" "$root/*.cpp" "$root/*.cxx" "$root/*.h" "$root/*.hpp" \
             | grep -vE '(^|/)(third_party|thirdparty|external|vendor|extern|_deps|subprojects)/' \
             > cf-files.txt
           count=$(wc -l < cf-files.txt | tr -d ' ')
@@ -404,11 +431,20 @@ jobs:
           if [ -n "$dir" ]; then
             cd "$(dirname "$dir")" || exit 0
             pip install --quiet meson ninja
-            meson setup build >/dev/null 2>&1 && meson test -C build
-            code=$?
-            jq -n --arg passed "$([ $code -eq 0 ] && echo true || echo false)" \
-              '{probe:"test.unit",outcome:"enforced",tool:"meson test",detail:"meson test",blocking:"false",passed:$passed}' \
-              > "$GITHUB_WORKSPACE/code-futures-obs"/cpp-test.json
+            obs="$GITHUB_WORKSPACE/code-futures-obs/cpp-test.json"
+            if ! meson setup build >setup.log 2>&1; then
+              # Configuration failed, usually a missing native dependency.
+              # No test ran, so there is nothing to report about the tests --
+              # and reporting one anyway is how a failed scan becomes a
+              # passing claim.
+              tail -20 setup.log || true
+              jq -n '{probe:"test.unit",outcome:"unreadable",reason:"meson setup did not complete, so no test ran."}' > "$obs"
+            else
+              meson test -C build
+              code=$?
+              jq -n --arg passed "$([ $code -eq 0 ] && echo true || echo false)" \
+                '{probe:"test.unit",outcome:"enforced",tool:"meson test",detail:"meson test",blocking:"false",passed:$passed}' > "$obs"
+            fi
           fi
 
       - uses: actions/upload-artifact@v4
@@ -452,6 +488,7 @@ jobs:
       - uses: github/codeql-action/autobuild@v3
         if: steps.langs.outputs.langs != ''
       - uses: github/codeql-action/analyze@v3
+        id: analyze
         if: steps.langs.outputs.langs != ''
 
       - name: Record that SAST ran

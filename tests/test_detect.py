@@ -289,8 +289,14 @@ class TestCppDetection:
         got = detect.detect_config({"Plugins/MCPUnreal/.clang-tidy": "Checks: '*'\n"})
         assert [(f.kind, f.tool) for f in got] == [("lint", "clang-tidy")]
 
-    def test_meson_is_a_test_signal(self):
-        got = detect.detect_config({"xplane_plugin/meson.build": "project('x', 'cpp')\n"})
+    def test_meson_without_tests_is_not_a_test_signal(self):
+        """A build file declares a build. The CMake signals already required
+        test evidence, and this one was inconsistent with them."""
+        assert detect.detect_config({"xplane_plugin/meson.build": "project('x', 'cpp')\n"}) == []
+
+    def test_meson_declaring_a_test_is(self):
+        src = "project('x', 'cpp')\ntest('suite', executable('t', 't.cpp'))\n"
+        got = detect.detect_config({"xplane_plugin/meson.build": src})
         assert [(f.kind, f.tool) for f in got] == [("test.unit", "meson")]
 
     def test_cmake_without_tests_is_not_a_test_signal(self):

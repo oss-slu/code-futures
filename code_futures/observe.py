@@ -60,6 +60,19 @@ def load(directory: Path) -> list[ProbeResult]:
     return out
 
 
+def _scalar(v: object) -> str:
+    """Stringify an attribute value to the artifact's conventions.
+
+    JSON booleans need lowercasing: `str(False)` is `"False"`, the contract
+    is `"false"`, and `render.py` compares against the lowercase form. A
+    fragment using the documented `"blocking": false` therefore matched
+    nothing and its advisory note was silently dropped.
+    """
+    if isinstance(v, bool):
+        return "true" if v else "false"
+    return str(v)
+
+
 def _one(frag: object) -> ProbeResult | None:
     """One fragment, or `None` if it is not usable.
 
@@ -99,7 +112,7 @@ def _one(frag: object) -> ProbeResult | None:
         outcome = Outcome.PRESENT
 
     attributes = {
-        k: str(v)
+        k: _scalar(v)
         for k, v in frag.items()
         if k not in ("probe", "outcome", "tool", "detail", "language", "evidence")
         and isinstance(v, (str, int, float, bool))
@@ -139,6 +152,18 @@ def _combine(a: ProbeResult, b: ProbeResult) -> ProbeResult:
     language establishes nothing about the others.
     """
     strong, weak = (a, b) if _STRENGTH[a.outcome] >= _STRENGTH[b.outcome] else (b, a)
+
+    # `passed` is a conjunction across every run combined here. Keeping only
+    # the stronger finding's value let a passing Python suite hide a failing
+    # Rust one, and a green summary is the worst thing to be wrong about.
+    verdicts = [r.attributes.get("passed") for r in (a, b) if "passed" in r.attributes]
+    if verdicts:
+        strong.attributes["passed"] = "true" if all(v == "true" for v in verdicts) else "false"
+    # Likewise advisory-ness: if any combined run could not fail, say so.
+    blocking = [r.attributes.get("blocking") for r in (a, b) if "blocking" in r.attributes]
+    if blocking:
+        strong.attributes["blocking"] = "true" if all(v == "true" for v in blocking) else "false"
+
     for e in weak.evidence:
         if e not in strong.evidence:
             strong.evidence.append(e)
@@ -163,7 +188,15 @@ def merge(inferred: list[ProbeResult], observed: list[ProbeResult]) -> list[Prob
     Two *observations* of the same probe are combined by strength rather than
     by order -- see `_combine`.
     """
-    merged = {r.key: r for r in inferred}
+    merged: dict[tuple[str, str | None], ProbeResult] = {}
+    # Inference can collide with itself: `capabilities()` may return an
+    # enforced pytest and a configured-but-unrun Jest, both keyed
+    # `test.unit`. A plain comprehension kept whichever the collector
+    # happened to emit last, downgrading an enforced suite and discarding
+    # its evidence.
+    for r in inferred:
+        merged[r.key] = _combine(merged[r.key], r) if r.key in merged else r
+
     seen_observed: set[tuple[str, str | None]] = set()
     for r in observed:
         if r.key in seen_observed:
@@ -171,4 +204,14 @@ def merge(inferred: list[ProbeResult], observed: list[ProbeResult]) -> list[Prob
         else:
             merged[r.key] = r
             seen_observed.add(r.key)
-    return list(merged.values())
+
+    # A language-unspecified placeholder and a language-specific finding for
+    # the same probe have different keys, so both survived -- leaving the
+    # artifact asserting that linting is absent and that Python linting is
+    # enforced. Once any language has an answer, the unspecified one is noise.
+    languaged = {pid for (pid, lang) in merged if lang is not None}
+    return [
+        r
+        for key, r in merged.items()
+        if not (key[1] is None and key[0] in languaged and r.outcome in (Outcome.ABSENT, Outcome.UNREADABLE))
+    ]

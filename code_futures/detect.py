@@ -239,7 +239,10 @@ _CONFIG: tuple[Signal, ...] = (
     # neither.
     Signal("clang-format", "C/C++", "format", filename=".clang-format"),
     Signal("clang-tidy", "C/C++", "lint", filename=".clang-tidy"),
-    Signal("meson", "C/C++", "test.unit", filename="meson.build"),
+    # `meson.build` alone declares a build, not tests -- the same standard the
+    # CMake signals below already applied. The meson project here declares
+    # `test()` in its own build file.
+    Signal("meson", "C/C++", "test.unit", content_key="test(", in_file="meson.build"),
     Signal("ctest", "C/C++", "test.unit", content_key="enable_testing", in_file="CMakeLists.txt"),
     Signal("ctest", "C/C++", "test.unit", content_key="add_test", in_file="CMakeLists.txt"),
     # Language-agnostic: pre-commit is configuration rather than enforcement,

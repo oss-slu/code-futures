@@ -230,3 +230,71 @@ class TestSingleAnswerCollision:
         b = ProbeResult("test.unit", Outcome.PRESENT, evidence=["package.json"])
         got = observe.merge([], [a, b])[0]
         assert set(got.evidence) == {"ci.yml", "package.json"}
+
+
+class TestAttributeConventions:
+    def test_json_booleans_become_lowercase(self, tmp_path):
+        """`str(False)` is `"False"`; the contract and `render.py` both use
+        `"false"`. The documented `"blocking": false` form matched nothing,
+        so the advisory note was silently omitted."""
+        _write(
+            tmp_path,
+            "a.json",
+            {
+                "probe": "lint",
+                "outcome": "enforced",
+                "language": "Python",
+                "blocking": False,
+                "passed": True,
+            },
+        )
+        got = observe.load(tmp_path)[0]
+        assert got.attributes["blocking"] == "false"
+        assert got.attributes["passed"] == "true"
+
+
+class TestCombinedVerdicts:
+    def test_a_failing_run_is_not_hidden_by_a_passing_one(self):
+        """`passed` is a conjunction. A green summary is the worst thing to
+        be wrong about."""
+        ok = ProbeResult("test.unit", Outcome.ENFORCED, tool="pytest", attributes={"passed": "true"})
+        bad = ProbeResult("test.unit", Outcome.ENFORCED, tool="cargo test", attributes={"passed": "false"})
+        for order in ([ok, bad], [bad, ok]):
+            assert observe.merge([], list(order))[0].attributes["passed"] == "false", order
+
+    def test_all_passing_stays_passing(self):
+        a = ProbeResult("test.unit", Outcome.ENFORCED, attributes={"passed": "true"})
+        b = ProbeResult("test.unit", Outcome.ENFORCED, attributes={"passed": "true"})
+        assert observe.merge([], [a, b])[0].attributes["passed"] == "true"
+
+    def test_a_non_blocking_run_makes_the_combination_non_blocking(self):
+        a = ProbeResult("lint", Outcome.ENFORCED, language="Python", attributes={"blocking": "true"})
+        b = ProbeResult("lint", Outcome.ENFORCED, language="Python", attributes={"blocking": "false"})
+        assert observe.merge([], [a, b])[0].attributes["blocking"] == "false"
+
+
+class TestInferredCollisions:
+    def test_inference_colliding_with_itself_is_combined_not_dropped(self):
+        """`capabilities()` can return an enforced pytest and a
+        configured-but-unrun Jest, both keyed `test.unit`. Keeping whichever
+        came last downgraded an enforced suite and lost its evidence."""
+        strong = ProbeResult("test.unit", Outcome.ENFORCED, tool="pytest", evidence=["ci.yml"])
+        weak = ProbeResult("test.unit", Outcome.PRESENT, tool="jest", evidence=["package.json"])
+        for order in ([strong, weak], [weak, strong]):
+            got = observe.merge(list(order), [])
+            assert len(got) == 1
+            assert got[0].outcome is Outcome.ENFORCED, order
+            assert set(got[0].evidence) == {"ci.yml", "package.json"}
+
+    def test_a_languageless_absence_yields_to_a_language_specific_answer(self):
+        """Different keys meant both survived, so one artifact asserted that
+        linting is absent and that Python linting is enforced."""
+        got = observe.merge(
+            [ProbeResult("lint", Outcome.ABSENT)],
+            [ProbeResult("lint", Outcome.ENFORCED, language="Python", tool="ruff")],
+        )
+        assert [(r.language, r.outcome) for r in got] == [("Python", Outcome.ENFORCED)]
+
+    def test_a_languageless_answer_survives_when_nothing_else_speaks(self):
+        got = observe.merge([ProbeResult("lint", Outcome.ABSENT)], [])
+        assert [(r.language, r.outcome) for r in got] == [(None, Outcome.ABSENT)]
