@@ -228,6 +228,20 @@ _CONFIG: tuple[Signal, ...] = (
     Signal("rustfmt", "Rust", "format", filename=".rustfmt.toml"),
     Signal("rustfmt", "Rust", "format", content_key="rustfmt", in_file="rust-toolchain.toml"),
     Signal("cargo-mutants", "Rust", "test.mutation", filename=".cargo/mutants.toml"),
+    # C and C++, treated as one language because the toolchain is shared:
+    # clang-format and clang-tidy do not care which it is, and splitting the
+    # label would double every row to no benefit.
+    #
+    # Drawn from the two C/C++ projects in this portfolio, which share almost
+    # nothing. One is an Unreal Engine project -- `.uproject`, `.uplugin`,
+    # `*.Build.cs`, no CMake anywhere -- and the other is meson with a CMake
+    # test subdirectory. A detector that assumed CMake would have found
+    # neither.
+    Signal("clang-format", "C/C++", "format", filename=".clang-format"),
+    Signal("clang-tidy", "C/C++", "lint", filename=".clang-tidy"),
+    Signal("meson", "C/C++", "test.unit", filename="meson.build"),
+    Signal("ctest", "C/C++", "test.unit", content_key="enable_testing", in_file="CMakeLists.txt"),
+    Signal("ctest", "C/C++", "test.unit", content_key="add_test", in_file="CMakeLists.txt"),
     # Language-agnostic: pre-commit is configuration rather than enforcement,
     # because it only runs for a developer who installed it.
     Signal("pre-commit", "Python", "lint", filename=".pre-commit-config.yaml"),
@@ -320,6 +334,16 @@ _RUN: tuple[tuple[str, str, str, str], ...] = (
     # every Gradle aggregate as a test run produces a false positive on the
     # one Android repository here, which is why the pattern names `build` and
     # `check` rather than matching `gradlew` generally.
+    # C and C++
+    (r"\bclang-tidy\b", "clang-tidy", "C/C++", "lint"),
+    (r"\bclang-format\b", "clang-format", "C/C++", "format"),
+    (r"\bmeson\s+test\b", "meson test", "C/C++", "test.unit"),
+    (r"\bctest\b", "ctest", "C/C++", "test.unit"),
+    # `meson compile`, `meson setup`, `cmake --build` and `make` are
+    # deliberately absent. They build and run nothing, the same reason
+    # `./gradlew assembleRelease` is absent: treating a build as a test run
+    # is a false positive, and the only meson project here has its test step
+    # commented out.
     # Rust
     (r"\bcargo\s+clippy\b", "clippy", "Rust", "lint"),
     (r"\bcargo\s+fmt\b", "rustfmt", "Rust", "format"),
@@ -329,6 +353,21 @@ _RUN: tuple[tuple[str, str, str, str], ...] = (
 )
 
 _COMPILED = tuple((re.compile(rx), tool, lang, kind) for rx, tool, lang, kind in _RUN)
+
+# super-linter declares what it validates in an `env:` block rather than in a
+# command, so `run:`-line matching cannot see it. Only validators actually
+# observed enabled in this organisation are listed: the action defaults most
+# of them off, and assuming otherwise would credit a repository with checks
+# it switched off.
+_SUPERLINTER: tuple[tuple[str, str, str, str], ...] = (
+    ("VALIDATE_CLANG_FORMAT", "clang-format", "C/C++", "format"),
+    ("VALIDATE_PYTHON_RUFF", "ruff", "Python", "lint"),
+    ("VALIDATE_PYTHON_FLAKE8", "flake8", "Python", "lint"),
+    ("VALIDATE_PYTHON_BLACK", "black", "Python", "format"),
+    ("VALIDATE_JAVASCRIPT_ES", "eslint", "JavaScript", "lint"),
+    ("VALIDATE_TYPESCRIPT_ES", "eslint", "JavaScript", "lint"),
+)
+
 
 # A step that cannot fail the build. All four forms were observed here.
 _NON_BLOCKING = re.compile(r"\|\|\s*true\b|--exit-zero\b|--fail-under=|\|\|\s*echo\b")
@@ -460,6 +499,31 @@ def detect_runs(workflows: dict[str, str], scripts: dict[str, str] | None = None
     for path, text in workflows.items():
         if is_vendored(path):
             continue
+
+        # super-linter first: its findings come from the env block, not a
+        # command, and in one repository here it is the only C++ format check
+        # that exists.
+        if "super-linter" in text:
+            body = _strip_comments(text)
+            for var, tool, lang, kind in _SUPERLINTER:
+                if not re.search(rf"{var}\s*:\s*[\"']?true", body, re.I):
+                    continue
+                key = (kind, lang, tool)
+                if key in seen:
+                    continue
+                seen.add(key)
+                out.append(
+                    Finding(
+                        kind=kind,
+                        language=lang,
+                        tool=tool,
+                        invocation=path,
+                        command=f"super-linter, {var}",
+                        blocking=True,
+                        evidence=[path],
+                    )
+                )
+
         for cmd in run_lines(text):
             resolved, real = resolve_script(scripts, cmd)
             if not real:

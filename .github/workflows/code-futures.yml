@@ -67,10 +67,9 @@ jobs:
     outputs:
       python: ${{ steps.d.outputs.python }}
       node: ${{ steps.d.outputs.node }}
-      java: ${{ steps.d.outputs.java }}
       rust: ${{ steps.d.outputs.rust }}
+      cpp: ${{ steps.d.outputs.cpp }}
       python_dir: ${{ steps.d.outputs.python_dir }}
-      java_dir: ${{ steps.d.outputs.java_dir }}
       rust_dir: ${{ steps.d.outputs.rust_dir }}
     steps:
       - uses: actions/checkout@v4
@@ -108,11 +107,13 @@ jobs:
           {
             echo "python=$(find_any -name pyproject.toml -o -name requirements.txt -o -name setup.py -o -name setup.cfg -o -name Pipfile)"
             echo "python_dir=$(dir_of -name pyproject.toml -o -name requirements.txt -o -name setup.py)"
-            echo "java_dir=$(dir_of -name pom.xml -o -name build.gradle -o -name build.gradle.kts)"
             echo "rust_dir=$(dir_of -name Cargo.toml)"
             echo "node=$(find_any -name package.json)"
-            echo "java=$(find_any -name pom.xml -o -name build.gradle -o -name build.gradle.kts)"
             echo "rust=$(find_any -name Cargo.toml)"
+            # C and C++ are recognised from their tooling rather than a
+            # single manifest, because the two projects here share none: one
+            # is Unreal Engine with no CMake at all, the other is meson.
+            echo "cpp=$(find_any -name .clang-format -o -name .clang-tidy -o -name meson.build -o -name CMakeLists.txt -o -name '*.uproject')"
           } | tee -a "$GITHUB_OUTPUT"
 
   # --------------------------------------------------------------------
@@ -308,57 +309,6 @@ jobs:
           if-no-files-found: ignore
 
   # --------------------------------------------------------------------
-  java:
-    name: java
-    needs: detect
-    if: needs.detect.outputs.java == 'true'
-    runs-on: ubuntu-latest
-    continue-on-error: true
-    defaults:
-      run:
-        working-directory: ${{ needs.detect.outputs.java_dir }}
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-java@v4
-        with:
-          distribution: temurin
-          java-version: "21"
-
-      - run: mkdir -p "$GITHUB_WORKSPACE/code-futures-obs"
-
-      - name: Build and test
-        continue-on-error: true
-        # `./gradlew build` triggers `check`, which runs the test task. The
-        # word "test" appears in no workflow in this organisation and the
-        # tests do execute, which is why the aggregate is what we invoke.
-        #
-        # `assembleRelease` is deliberately not used as a substitute:
-        # `assemble` and `check` are siblings under `build`, so it runs no
-        # tests at all.
-        run: |
-          set +e
-          if [ -f gradlew ]; then
-            chmod +x gradlew
-            ./gradlew build; code=$?
-            tool="gradle build"
-          elif [ -f pom.xml ]; then
-            mvn -B --no-transfer-progress test; code=$?
-            tool="maven test"
-          else
-            exit 0
-          fi
-          printf '{"probe":"test.unit","outcome":"enforced","tool":"%s","detail":"tests run through the build aggregate","blocking":"false","passed":"%s"}\n' \
-            "$tool" "$([ $code -eq 0 ] && echo true || echo false)" \
-            > "$GITHUB_WORKSPACE/code-futures-obs"/java-test.json
-
-      - uses: actions/upload-artifact@v4
-        if: always()
-        with:
-          name: cf-obs-java
-          path: code-futures-obs/
-          if-no-files-found: ignore
-
-  # --------------------------------------------------------------------
   rust:
     name: rust
     needs: detect
@@ -399,6 +349,76 @@ jobs:
           if-no-files-found: ignore
 
   # --------------------------------------------------------------------
+  cpp:
+    name: c / c++
+    needs: detect
+    if: needs.detect.outputs.cpp == 'true'
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - run: mkdir -p "$GITHUB_WORKSPACE/code-futures-obs"
+
+      - name: Format check
+        continue-on-error: true
+        # Format only. Neither C/C++ project in this portfolio can be built
+        # on a bare runner: one needs the Unreal Engine toolchain and the
+        # other's meson test step is commented out upstream. A format check
+        # needs no toolchain, works on both, and is the check they already
+        # run themselves.
+        run: |
+          set +e
+          [ -f .clang-format ] || exit 0
+          pip install --quiet clang-format
+
+          # Vendored C++ cannot be excluded by directory name here. One repo
+          # keeps first-party plugin code and a third-party SDK side by side
+          # under `Plugins/`, and checks only its own tree. Respect a
+          # `.clang-format-ignore` if present and otherwise skip the paths
+          # that are conventionally not ours.
+          git ls-files -- '*.c' '*.cc' '*.cpp' '*.cxx' '*.h' '*.hpp' \
+            | grep -vE '(^|/)(third_party|thirdparty|external|vendor|extern|_deps|subprojects)/' \
+            > cf-files.txt
+          count=$(wc -l < cf-files.txt | tr -d ' ')
+          [ "$count" -eq 0 ] && exit 0
+
+          clang-format --dry-run -Werror --files=cf-files.txt 2>clang-format.log
+          code=$?
+          tail -40 clang-format.log || true
+          jq -n --arg n "$count" --arg passed "$([ $code -eq 0 ] && echo true || echo false)" \
+            '{probe:"format",language:"C/C++",outcome:"enforced",tool:"clang-format",
+              detail:($n + " files checked"),blocking:"false",passed:$passed}' \
+            > "$GITHUB_WORKSPACE/code-futures-obs"/cpp-format.json
+
+      - name: Tests, where a test runner exists
+        continue-on-error: true
+        # `meson compile` and `cmake --build` are not run. A build is not a
+        # test, and recording one as the other is the false positive that
+        # `./gradlew assembleRelease` taught us to avoid.
+        run: |
+          set +e
+          dir=$(find . -name meson.build -not -path './subprojects/*' -print -quit)
+          if [ -n "$dir" ]; then
+            cd "$(dirname "$dir")" || exit 0
+            pip install --quiet meson ninja
+            meson setup build >/dev/null 2>&1 && meson test -C build
+            code=$?
+            jq -n --arg passed "$([ $code -eq 0 ] && echo true || echo false)" \
+              '{probe:"test.unit",outcome:"enforced",tool:"meson test",detail:"meson test",blocking:"false",passed:$passed}' \
+              > "$GITHUB_WORKSPACE/code-futures-obs"/cpp-test.json
+          fi
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: cf-obs-cpp
+          path: code-futures-obs/
+          if-no-files-found: ignore
+
+  # --------------------------------------------------------------------
   sast:
     name: sast
     runs-on: ubuntu-latest
@@ -423,7 +443,6 @@ jobs:
           if [ -n "$(find . -path ./node_modules -prune -o \( -name '*.js' -o -name '*.ts' -o -name '*.jsx' -o -name '*.tsx' \) -print -quit)" ]; then
             langs="${langs:+$langs,}javascript-typescript"
           fi
-          [ -n "$(find . -name '*.java' -print -quit)" ] && langs="${langs:+$langs,}java-kotlin"
           echo "langs=$langs" | tee -a "$GITHUB_OUTPUT"
 
       - uses: github/codeql-action/init@v3
@@ -463,7 +482,7 @@ jobs:
   # --------------------------------------------------------------------
   summarize:
     name: summarize
-    needs: [detect, python, node, java, rust, sast]
+    needs: [detect, python, node, rust, cpp, sast]
     # **Never remove this.** On success-only, a repository with a failing
     # check would produce no artifact and disappear from its own report,
     # which makes a failure look identical to non-adoption.

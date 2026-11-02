@@ -161,6 +161,8 @@ jobs:
 
 **There is no stack to declare.** Each job looks for its own manifest and skips when it finds none. A repository that is Python *and* React gets both toolchains rather than having to pick one.
 
+**Java has no job.** The detector still recognises Checkstyle, Spotless, JUnit and the rest, so a snapshot of a Java repository reports on it — but no active project in this portfolio is Java, and an untested workflow path is worse than an absent one. Add the job when a Java project arrives.
+
 **Pin the exact version.** `@v1.0.0` is immutable and will never change under you. The common convention of pinning a moving major tag like `@v1` is avoided here deliberately: a moving tag silently changes the CI of every repository using it, and means nobody can say what ran last Tuesday. The cost is that fixes need you to bump the tag, and you will be told when there is one.
 
 ### What the workflow does
@@ -170,8 +172,8 @@ jobs:
 | `detect` | Looks for a manifest of each kind, anywhere in the tree |
 | `python` | `ruff` lint, format check, `pytest` — skipped with no Python manifest |
 | `node` | Your own `lint` and `test` scripts — skipped with no `package.json` |
-| `java` | `./gradlew build` or `mvn test` |
 | `rust` | `cargo clippy`, `cargo fmt --check`, `cargo test` |
+| `cpp` | `clang-format --dry-run`, and `meson test` where a test runner exists |
 | `sast` | CodeQL, for the languages it finds, and records that it ran |
 | `summarize` | Writes `code-futures.json` and a summary table |
 
