@@ -195,6 +195,8 @@ If that workflow declares no top-level `permissions:` today, its jobs inherit th
 | `sast` | CodeQL, for the languages it finds — unless GitHub is already scanning |
 | `summarize` | Writes `code-futures.json` and a summary table |
 
+**The tools it installs are pinned**, in one `env:` block at the top of the workflow. An unpinned linter means your report changes when the linter releases, with no change to your code — and two reports are comparable only if the same versions produced them. Your *own* dependencies are deliberately not pinned by us: `requirements.txt` and `npm install` resolve the way you resolve them, because a report on a dependency set nobody builds against is not a report on your repository.
+
 ### Where the scanners went
 
 There is no SonarQube job, and the `sast` job stands aside when GitHub's own **default setup** code scanning is enabled. Both are deliberate, and the reason is the same for each: the platform's automatic scanner is already running, and *refuses* a second analysis alongside it.

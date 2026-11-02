@@ -65,6 +65,24 @@ on:
 permissions:
   contents: read
 
+# Every tool this workflow installs to run *against* a team's code is pinned
+# here, and the reason is sharper than supply-chain hygiene: an unpinned
+# linter means a team's report changes when the linter releases, with no
+# change to their code. Two reports are comparable only if the same versions
+# produced them, and comparability is something this tool claims.
+#
+# `ruff` matches the version this repository lints itself with, so there is
+# one ruff in the product rather than two. Bumping any of these is a
+# deliberate act with a test run behind it, not a side effect of a release
+# somewhere else.
+env:
+  RUFF_VERSION: "0.14.2"
+  BLACK_VERSION: "26.10.1"
+  PYTEST_VERSION: "9.2.0"
+  CLANG_FORMAT_VERSION: "23.1.3"
+  MESON_VERSION: "1.12.1"
+  NINJA_VERSION: "1.13.2"
+
 jobs:
   # --------------------------------------------------------------------
   detect:
@@ -154,7 +172,7 @@ jobs:
         continue-on-error: true
         run: |
           set +e
-          pip install --quiet ruff
+          pip install --quiet "ruff==$RUFF_VERSION"
           # Use the project's own ruff configuration when it has one. With no
           # configuration, fall back to the error-and-undefined-name subset
           # rather than the full default rule set: landing hundreds of style
@@ -189,12 +207,12 @@ jobs:
           # Ruff's 88-character default would flag correctly formatted code
           # and attribute the finding to the wrong tool.
           if grep -qs -e '\[tool\.black\]' pyproject.toml; then
-            pip install --quiet black
+            pip install --quiet "black==$BLACK_VERSION"
             black --check . ; code=$?
             tool="black"
           elif grep -qs -e '\[tool\.ruff\]' -e '\[tool\.ruff\.' pyproject.toml \
                || [ -f ruff.toml ] || [ -f .ruff.toml ]; then
-            pip install --quiet ruff
+            pip install --quiet "ruff==$RUFF_VERSION"
             ruff format --check . ; code=$?
             tool="ruff format"
           else
@@ -210,7 +228,11 @@ jobs:
         # that a test runner is configured, but that it ran and what it did.
         run: |
           set +e
-          pip install --quiet pytest
+          pip install --quiet "pytest==$PYTEST_VERSION"
+          # Deliberately unpinned, and flagged by Sonar for it. These are
+          # the team's declared dependencies, resolved the way the team
+          # resolves them. Pinning here would report on a dependency set
+          # nobody actually builds against. Same for `npm install` below.
           [ -f requirements.txt ] && pip install --quiet -r requirements.txt
           pip install --quiet -e . 2>/dev/null
           out=$(pytest -q 2>&1); code=$?
@@ -355,7 +377,11 @@ jobs:
         working-directory: ${{ needs.detect.outputs.rust_dir }}
     steps:
       - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
+      # Pinned to a commit, not to `stable`. `@stable` is a moving branch
+      # reference on a third-party action, which is the thing the README
+      # argues against two paragraphs after telling teams to pin exactly --
+      # and it sits in the file 29 repositories call.
+      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable as of 2026-10-16
         with:
           components: rustfmt, clippy
 
@@ -417,7 +443,7 @@ jobs:
           [ -n "$cfg" ] || exit 0
           root=$(dirname "$cfg")
           echo "clang-format configuration: $cfg"
-          pip install --quiet clang-format
+          pip install --quiet "clang-format==$CLANG_FORMAT_VERSION"
 
           # Vendored C++ cannot be excluded by directory name here. One repo
           # keeps first-party plugin code and a third-party SDK side by side
@@ -448,7 +474,7 @@ jobs:
           dir=$(find . -name meson.build -not -path './subprojects/*' -print -quit)
           if [ -n "$dir" ]; then
             cd "$(dirname "$dir")" || exit 0
-            pip install --quiet meson ninja
+            pip install --quiet "meson==$MESON_VERSION" "ninja==$NINJA_VERSION"
             obs="$GITHUB_WORKSPACE/code-futures-obs/cpp-test.json"
             if ! meson setup build >setup.log 2>&1; then
               # Configuration failed, usually a missing native dependency.
@@ -506,11 +532,28 @@ jobs:
         # SIGPIPE rather than the match.
         run: |
           set -uo pipefail
-          state=$(gh api "repos/${{ github.repository }}/code-scanning/default-setup" --jq .state 2>/dev/null || true)
-          if [ -z "$state" ] || [ "$state" = "null" ]; then
-            # `default-setup` wants admin, which a workflow token may not
-            # have. Fall back to a question we are certainly permitted to
-            # ask: default-setup analyses carry a distinctive analysis key.
+          state=""
+
+          # `--jq .state` does not yield an empty string on an HTTP error: it
+          # prints the error body. A first version tested `[ -z "$state" ]`
+          # and a real 403 -- "Resource not accessible by integration",
+          # because this endpoint wants admin and a workflow token is not --
+          # set `$state` to a JSON object, so the emptiness test passed, the
+          # fallback never ran, and the value went into `$GITHUB_OUTPUT` as a
+          # blob. Accept only the two answers the API documents.
+          raw=$(gh api "repos/${{ github.repository }}/code-scanning/default-setup" --jq .state 2>/dev/null || true)
+          case "$raw" in
+            configured|not-configured) state="$raw" ;;
+          esac
+
+          if [ -z "$state" ]; then
+            # Fall back to a question `security-events` is certainly allowed
+            # to ask. Default-setup analyses carry a distinctive key, so
+            # their presence answers the same question from the other side.
+            #
+            # Captured to a variable rather than piped to `grep -q`: under
+            # `pipefail` an early-exiting reader closes the pipe, the writer
+            # takes SIGPIPE, and the pipeline reports 141 even on a match.
             keys=$(gh api "repos/${{ github.repository }}/code-scanning/analyses?per_page=20" --jq '.[].analysis_key' 2>/dev/null || true)
             case "$keys" in
               *dynamic/github-code-scanning*) state=configured ;;
