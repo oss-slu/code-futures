@@ -179,7 +179,9 @@ If that workflow declares no top-level `permissions:` today, its jobs inherit th
 
 **Java has no job.** The detector still recognises Checkstyle, Spotless, JUnit and the rest, so a snapshot of a Java repository reports on it — but no active project in this portfolio is Java, and an untested workflow path is worse than an absent one. Add the job when a Java project arrives.
 
-**Pin the exact version.** `@v1.0.0` is immutable and will never change under you. The common convention of pinning a moving major tag like `@v1` is avoided here deliberately: a moving tag silently changes the CI of every repository using it, and means nobody can say what ran last Tuesday. The cost is that fixes need you to bump the tag, and you will be told when there is one.
+**Pin the exact version.** The common convention of pinning a moving major tag like `@v1` is avoided here deliberately: a moving tag silently changes the CI of every repository using it, and means nobody can say what ran last Tuesday. The cost is that fixes need you to bump the tag, and you will be told when there is one.
+
+`v1.0.0` was re-pointed once, on 2026-11-02, before any team had adopted it — the first real run of it against a repository found that both scanners it invoked were being refused by the platform's own automatic equivalents. That was the last free moment to fix it. From adoption onward the tag is frozen, and a fix arrives as a new one.
 
 ### What the workflow does
 
@@ -190,8 +192,21 @@ If that workflow declares no top-level `permissions:` today, its jobs inherit th
 | `node` | Your own `lint` and `test` scripts — skipped with no `package.json` |
 | `rust` | `cargo clippy`, `cargo fmt --check`, `cargo test` |
 | `cpp` | `clang-format --dry-run`, and `meson test` where a test runner exists |
-| `sast` | CodeQL, for the languages it finds, and records that it ran |
+| `sast` | CodeQL, for the languages it finds — unless GitHub is already scanning |
 | `summarize` | Writes `code-futures.json` and a summary table |
+
+### Where the scanners went
+
+There is no SonarQube job, and the `sast` job stands aside when GitHub's own **default setup** code scanning is enabled. Both are deliberate, and the reason is the same for each: the platform's automatic scanner is already running, and *refuses* a second analysis alongside it.
+
+| Tool | What it says when both are configured |
+|---|---|
+| CodeQL | `analyses from advanced configurations cannot be processed when the default setup is enabled` |
+| SonarQube | `You are running CI analysis while Automatic Analysis is enabled` |
+
+A job that duplicates them earns a failed check and a red cross on every pull request while changing nothing about whether the code is scanned. So `sast` asks whether default setup is on and defers to it, and Sonar's results are read over its API instead of produced in CI.
+
+The automatic versions are also the better half of the trade for a team adopting CI this week: no configuration, no scanner step, nothing to maintain, and both decorate pull requests on their own. What CI analysis would add is test coverage ingestion, which needs a coverage report the repository has to produce first.
 
 ### What it does *not* do
 
@@ -264,7 +279,7 @@ PyYAML, to read the orchestration tooling's practice snapshot. Everything else i
 
 - **Vendored upstream source is not detected.** No path convention distinguishes it, and guessing risks excluding real source, which is the worse error.
 - **Several config markers are unexercised.** Checkstyle, PMD, SpotBugs, Spotless, JaCoCo, tarpaulin and cargo-mutants matched nothing in the repositories this was first built against. Kept for portability, and untested until something fires them.
-- **`structure.duplication` and `structure.complexity` need SonarQube.** They report `unreadable` without it.
+- **`structure.duplication` and `structure.complexity` need SonarQube.** They are the two measurements this tool cannot make itself — the indentation proxy sees nesting and nothing else, and duplication needs real token comparison. Both come from SonarQube Cloud's Automatic Analysis, which computes them on import with no workflow and no per-repository configuration. Without a Sonar token they report `unreadable`.
 
 ---
 

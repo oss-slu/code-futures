@@ -434,6 +434,113 @@ def _all_unreadable(reason: str) -> list[ProbeResult]:
 
 _SONAR_PROBES = ("quality.project", "quality.gate", "quality.hotspots_reviewed")
 
+# Duplication and cognitive complexity are the two measurements this tool
+# cannot make itself. The indentation proxy in `structure.py` sees nesting and
+# nothing else, and duplication needs real token comparison.
+#
+# Both arrive free: SonarQube Cloud's Automatic Analysis computes them on
+# import, with no workflow and no per-repository configuration. That is why
+# there is no Sonar job in the reusable workflow -- see the comment where it
+# used to be.
+_SONAR_METRICS = "duplicated_lines_density,duplicated_blocks,cognitive_complexity,files"
+
+# Sonar's own default quality gate fires at 3% on new code, so a repository
+# under that is at a level its own tooling calls acceptable. Reporting
+# "0.4% duplicated" as a finding trains people to skip the section.
+DUPLICATION_THRESHOLD = 3.0
+
+
+def _measures(key: str, cfg: Config) -> dict[str, str]:
+    """Measures for one component, as `{metric: value}`."""
+    data = _sonar_get(
+        f"https://sonarcloud.io/api/measures/component?component={key}&metricKeys={_SONAR_METRICS}", cfg
+    )
+    if not data:
+        return {}
+    measures = (data.get("component") or {}).get("measures") or []
+    return {m["metric"]: m["value"] for m in measures if "metric" in m and "value" in m}
+
+
+def _most_complex_file(key: str, cfg: Config) -> tuple[str, int] | None:
+    """The single file carrying the most cognitive complexity."""
+    data = _sonar_get(
+        f"https://sonarcloud.io/api/measures/component_tree?component={key}"
+        "&metricKeys=cognitive_complexity&s=metric&metricSort=cognitive_complexity"
+        "&asc=false&qualifiers=FIL&ps=1",
+        cfg,
+    )
+    for component in (data or {}).get("components") or []:
+        for m in component.get("measures") or []:
+            if m.get("metric") == "cognitive_complexity":
+                try:
+                    return component.get("path") or component.get("key", ""), int(float(m["value"]))
+                except (KeyError, ValueError):
+                    return None
+    return None
+
+
+def _structure_from_sonar(key: str, cfg: Config) -> list[ProbeResult]:
+    """The two structural measurements only Sonar can make.
+
+    Absent measures are reported `UNREADABLE`, not `ABSENT`: a project Sonar
+    analysed in a language it does not compute cognitive complexity for has
+    not been shown to be simple.
+    """
+    m = _measures(key, cfg)
+    out: list[ProbeResult] = []
+
+    if "duplicated_lines_density" in m:
+        try:
+            density = float(m["duplicated_lines_density"])
+        except ValueError:
+            density = -1.0
+        if density < 0:
+            out.append(_unreadable_structure("structure.duplication"))
+        elif density >= DUPLICATION_THRESHOLD:
+            out.append(
+                ProbeResult(
+                    id="structure.duplication",
+                    outcome=Outcome.PRESENT,
+                    attributes={"density": f"{density:g}", "blocks": m.get("duplicated_blocks", "0")},
+                    source="sonar",
+                )
+            )
+        else:
+            out.append(ProbeResult(id="structure.duplication", outcome=Outcome.ABSENT, source="sonar"))
+    else:
+        out.append(_unreadable_structure("structure.duplication"))
+
+    total = m.get("cognitive_complexity")
+    top = _most_complex_file(key, cfg) if total else None
+    if total and top:
+        out.append(
+            ProbeResult(
+                id="structure.complexity",
+                outcome=Outcome.PRESENT,
+                attributes={
+                    "total": total,
+                    "files": m.get("files", "?"),
+                    "top": top[0],
+                    "top_value": str(top[1]),
+                },
+                source="sonar",
+            )
+        )
+    elif total == "0":
+        out.append(ProbeResult(id="structure.complexity", outcome=Outcome.ABSENT, source="sonar"))
+    else:
+        out.append(_unreadable_structure("structure.complexity"))
+    return out
+
+
+def _unreadable_structure(pid: str) -> ProbeResult:
+    return ProbeResult(
+        id=pid,
+        outcome=Outcome.UNREADABLE,
+        attributes={"reason": "SonarQube Cloud did not report this measurement."},
+        source="sonar",
+    )
+
 
 def sonar(repository: str, cfg: Config) -> list[ProbeResult]:
     """Read SonarQube Cloud analysis for one repository.
@@ -484,6 +591,8 @@ def sonar(repository: str, cfg: Config) -> list[ProbeResult]:
             source="sonar",
         )
     ]
+
+    out.extend(_structure_from_sonar(key, cfg))
 
     gate = _sonar_get(f"{base}/qualitygates/project_status?projectKey={key}", cfg) or {}
     status = (gate.get("projectStatus") or {}).get("status")

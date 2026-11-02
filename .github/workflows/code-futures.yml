@@ -51,6 +51,16 @@ on:
       node-version:
         type: string
         default: "20"
+      artifact_suffix:
+        description: >-
+          Appended to every artifact name. Teams never need this. It exists
+          because artifact names are per-run, not per-job: a repository that
+          calls this workflow twice in one run uploads two artifacts named
+          `cf-obs-sast`, and `gh run download` writes one over the other
+          without a word. We found that by reading the wrong fragment and
+          concluding a fix had failed.
+        type: string
+        default: ""
 
 permissions:
   contents: read
@@ -222,7 +232,7 @@ jobs:
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: cf-obs-python
+          name: cf-obs-python${{ inputs.artifact_suffix }}
           path: code-futures-obs/
           if-no-files-found: ignore
 
@@ -329,7 +339,7 @@ jobs:
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: cf-obs-node
+          name: cf-obs-node${{ inputs.artifact_suffix }}
           path: code-futures-obs/
           if-no-files-found: ignore
 
@@ -369,7 +379,7 @@ jobs:
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: cf-obs-rust
+          name: cf-obs-rust${{ inputs.artifact_suffix }}
           path: code-futures-obs/
           if-no-files-found: ignore
 
@@ -458,7 +468,7 @@ jobs:
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: cf-obs-cpp
+          name: cf-obs-cpp${{ inputs.artifact_suffix }}
           path: code-futures-obs/
           if-no-files-found: ignore
 
@@ -477,7 +487,40 @@ jobs:
       security-events: write
     steps:
       - uses: actions/checkout@v4
+
+      - id: native
+        # GitHub's own "default setup" code scanning runs CodeQL with no
+        # workflow at all -- and *refuses* ours when it is on: "CodeQL
+        # analyses from advanced configurations cannot be processed when the
+        # default setup is enabled". Running ours anyway earns a failed job
+        # and a red cross on every pull request while changing nothing about
+        # whether the code gets scanned.
+        #
+        # So ask first and defer. Scanning is enforced either way. This only
+        # decides who does it, and the zero-config answer is the better one
+        # for a team adopting CI this week.
+        env:
+          GH_TOKEN: ${{ github.token }}
+        # No `-e`, because every lookup here is allowed to fail, and no
+        # pipelines, because `cmd | grep -q` under `pipefail` reports the
+        # SIGPIPE rather than the match.
+        run: |
+          set -uo pipefail
+          state=$(gh api "repos/${{ github.repository }}/code-scanning/default-setup" --jq .state 2>/dev/null || true)
+          if [ -z "$state" ] || [ "$state" = "null" ]; then
+            # `default-setup` wants admin, which a workflow token may not
+            # have. Fall back to a question we are certainly permitted to
+            # ask: default-setup analyses carry a distinctive analysis key.
+            keys=$(gh api "repos/${{ github.repository }}/code-scanning/analyses?per_page=20" --jq '.[].analysis_key' 2>/dev/null || true)
+            case "$keys" in
+              *dynamic/github-code-scanning*) state=configured ;;
+              *) state=unknown ;;
+            esac
+          fi
+          echo "default_setup=$state" | tee -a "$GITHUB_OUTPUT"
+
       - id: langs
+        if: steps.native.outputs.default_setup != 'configured'
         # CodeQL needs to be told which languages to analyse, and fails
         # rather than skipping when given none.
         run: |
@@ -490,14 +533,14 @@ jobs:
           echo "langs=$langs" | tee -a "$GITHUB_OUTPUT"
 
       - uses: github/codeql-action/init@v3
-        if: steps.langs.outputs.langs != ''
+        if: steps.native.outputs.default_setup != 'configured' && steps.langs.outputs.langs != ''
         with:
           languages: ${{ steps.langs.outputs.langs }}
       - uses: github/codeql-action/autobuild@v3
-        if: steps.langs.outputs.langs != ''
+        if: steps.native.outputs.default_setup != 'configured' && steps.langs.outputs.langs != ''
       - uses: github/codeql-action/analyze@v3
         id: analyze
-        if: steps.langs.outputs.langs != ''
+        if: steps.native.outputs.default_setup != 'configured' && steps.langs.outputs.langs != ''
 
       - name: Record that SAST ran
         if: always()
@@ -515,8 +558,11 @@ jobs:
           obs="$GITHUB_WORKSPACE/code-futures-obs/sast.json"
           langs='${{ steps.langs.outputs.langs }}'
           analyzed='${{ steps.analyze.outcome }}'
-          echo "languages=$langs  analyze outcome=$analyzed"
-          if [ -z "$langs" ]; then
+          native='${{ steps.native.outputs.default_setup }}'
+          echo "default setup=$native  languages=$langs  analyze outcome=$analyzed"
+          if [ "$native" = "configured" ]; then
+            jq -n '{probe:"security.sast",outcome:"enforced",tool:"CodeQL (GitHub default setup)",detail:"GitHub scans this repository on its own; this workflow stood aside rather than submit a second analysis",blocking:"false"}' > "$obs"
+          elif [ -z "$langs" ]; then
             jq -n '{probe:"security.sast",outcome:"absent",detail:"CodeQL supports none of the languages found here"}' > "$obs"
           elif [ "$analyzed" = "success" ]; then
             jq -n --arg langs "$langs" \
@@ -532,73 +578,30 @@ jobs:
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: cf-obs-sast
+          name: cf-obs-sast${{ inputs.artifact_suffix }}
           path: code-futures-obs/
           if-no-files-found: ignore
 
-  # --------------------------------------------------------------------
-  quality:
-    name: quality
-    needs: detect
-    runs-on: ubuntu-latest
-    continue-on-error: true
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          # SonarQube attributes findings to commits, so it needs history.
-          # On a shallow clone every line looks new and the "new code"
-          # quality gate becomes meaningless.
-          fetch-depth: 0
-
-      - name: Analyse with SonarQube Cloud
-        id: sonar
-        continue-on-error: true
-        # Skipped, not failed, when no token is configured. A Sonar outage or
-        # a rotated credential should degrade to a missing section, never to
-        # a red build in somebody's repository.
-        if: env.SONAR_TOKEN != ''
-        env:
-          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
-        uses: SonarSource/sonarqube-scan-action@v4
-        with:
-          args: >
-            -Dsonar.projectKey=${{ github.repository_owner }}_${{ github.event.repository.name }}
-            -Dsonar.organization=${{ github.repository_owner }}
-
-      - name: Record what analysis found
-        if: always()
-        env:
-          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
-        run: |
-          set -euo pipefail
-          mkdir -p "$GITHUB_WORKSPACE/code-futures-obs"
-          obs="$GITHUB_WORKSPACE/code-futures-obs/quality.json"
-          key="${{ github.repository_owner }}_${{ github.event.repository.name }}"
-          outcome='${{ steps.sonar.outcome }}'
-
-          if [ -z "${SONAR_TOKEN:-}" ]; then
-            # No credential is our gap, not the repository's.
-            jq -n '[{probe:"quality.project",outcome:"unreadable",reason:"No SonarQube Cloud token is configured for this organisation."}]' > "$obs"
-          elif [ "$outcome" != "success" ]; then
-            jq -n --arg o "${outcome:-skipped}" \
-              '[{probe:"quality.project",outcome:"unreadable",reason:("The SonarQube analysis did not complete (" + $o + ").")}]' > "$obs"
-          else
-            jq -n --arg key "$key" \
-              '[{probe:"quality.project",outcome:"enforced",project_key:$key,last_analysis:"this run",detail:("Analysed as " + $key + "."),blocking:"false"}]' > "$obs"
-          fi
-          cat "$obs"
-
-      - uses: actions/upload-artifact@v4
-        if: always()
-        with:
-          name: cf-obs-quality
-          path: code-futures-obs/
-          if-no-files-found: ignore
+  # SonarQube Cloud has no job here, and that is the finding rather than an
+  # omission. Automatic Analysis -- which the GitHub App turns on when a
+  # project is imported -- already analyses every push and decorates every
+  # pull request, and refuses a CI analysis alongside it: "You are running CI
+  # analysis while Automatic Analysis is enabled." Same shape as the CodeQL
+  # problem above.
+  #
+  # It is also the better half of the trade for this portfolio: no per-repo
+  # configuration, no scanner step, nothing for a team to maintain. What CI
+  # analysis would add is test coverage ingestion, and that needs a coverage
+  # report the repository does not currently produce.
+  #
+  # `collectors.sonar()` reads the results over the Sonar API, so the probes
+  # are answered without a job. CI cannot see Sonar, and pretending otherwise
+  # is what the removed job did.
 
   # --------------------------------------------------------------------
   summarize:
     name: summarize
-    needs: [detect, python, node, rust, cpp, sast, quality]
+    needs: [detect, python, node, rust, cpp, sast]
     # **Never remove this.** On success-only, a repository with a failing
     # check would produce no artifact and disappear from its own report,
     # which makes a failure look identical to non-adoption.
@@ -655,5 +658,5 @@ jobs:
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: code-futures
+          name: code-futures${{ inputs.artifact_suffix }}
           path: code-futures.json

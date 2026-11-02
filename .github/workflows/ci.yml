@@ -120,4 +120,10 @@ jobs:
       contents: read
       security-events: write
     uses: ./.github/workflows/code-futures.yml
+    # Both callers upload artifacts, and artifact names are per-run. Without
+    # a suffix the two sets collide and `gh run download` writes one over the
+    # other silently -- which it did, and sent us chasing a fix that was
+    # working.
+    with:
+      artifact_suffix: -head
     secrets: inherit
