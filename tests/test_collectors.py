@@ -189,3 +189,124 @@ def test_measures_ignores_entries_with_no_value(sonar):
         )
     )
     assert collectors._measures("key", None) == {"files": "40"}
+
+
+# --- README sections -------------------------------------------------------
+#
+# The bug these cover: `README.rst` and a bare `README` are both accepted as
+# READMEs, and neither uses `#` headings. A complete reStructuredText README
+# was therefore reported as covering none of the four expected sections, and
+# the report recommended writing sections that were already written.
+
+COMPLETE_MD = """# Thing
+## Overview
+## Tech Stack
+## Installation
+## Project Structure
+"""
+
+COMPLETE_RST = """Thing
+=====
+
+Overview
+--------
+
+Tech Stack
+----------
+
+Installation
+------------
+
+Project Structure
+-----------------
+"""
+
+
+def test_restructuredtext_readme_is_unreadable_not_incomplete():
+    r = collectors.readme_result(COMPLETE_RST, source="local")
+    assert r.outcome is Outcome.UNREADABLE
+    assert "no Markdown headings" in r.attributes["reason"]
+
+
+def test_readme_with_no_headings_at_all_is_unreadable():
+    r = collectors.readme_result("Just a paragraph about the thing.\n", source="local")
+    assert r.outcome is Outcome.UNREADABLE
+
+
+def test_complete_markdown_readme_records_an_empty_missing_list():
+    r = collectors.readme_result(COMPLETE_MD, source="local")
+    assert r.outcome is Outcome.PRESENT
+    assert r.attributes["missing"] == ""
+    assert r.attributes["found"] == "4"
+    assert r.detail == "Covers all four expected sections."
+
+
+def test_incomplete_readme_names_what_is_missing():
+    r = collectors.readme_result("# Thing\n## Overview\n", source="local")
+    assert r.outcome is Outcome.PRESENT
+    assert "tech stack" in r.attributes["missing"].lower()
+
+
+def test_absent_readme_carries_its_own_reason():
+    r = collectors.readme_result(None, source="local", absent_reason="There is no README to read.")
+    assert r.outcome is Outcome.UNREADABLE
+    assert r.attributes["reason"] == "There is no README to read."
+
+
+# --- Scorecard mapping -----------------------------------------------------
+
+
+def scorecard_data(name: str, score: int, reason: str) -> dict:
+    return {"checks": [{"name": name, "score": score, "reason": reason}]}
+
+
+def test_review_practice_carries_scorecards_own_sentence():
+    """Its evidence used to go into `attributes` and reach nothing.
+
+    The template for this probe wants `{reviewed}` and `{total}`; given
+    neither, the fill failed and the finding rendered as the generic
+    "Configured, and invoked by CI" -- a sentence about configuration,
+    standing in for a proportion of reviewed pull requests.
+    """
+    [r] = collectors.scorecard_results(
+        scorecard_data("Code-Review", 8, "found 26 reviewed changesets out of 30")
+    )
+    assert r.id == "review.practiced"
+    assert r.outcome is Outcome.ENFORCED
+    assert r.detail == "found 26 reviewed changesets out of 30"
+
+
+def test_no_reviewed_changesets_is_absent():
+    [r] = collectors.scorecard_results(
+        scorecard_data("Code-Review", 0, "found 0 reviewed changesets out of 30")
+    )
+    assert r.outcome is Outcome.ABSENT
+
+
+def test_vulnerabilities_are_inverted_and_keep_their_detail():
+    [r] = collectors.scorecard_results(
+        scorecard_data("Vulnerabilities", 4, "6 existing vulnerabilities detected")
+    )
+    assert r.id == "deps.known_vulnerabilities"
+    assert r.outcome is Outcome.PRESENT
+    assert r.detail == "6 existing vulnerabilities detected"
+
+
+def test_a_clean_vulnerability_check_is_absent():
+    [r] = collectors.scorecard_results(scorecard_data("Vulnerabilities", 10, "no vulnerabilities detected"))
+    assert r.outcome is Outcome.ABSENT
+
+
+def test_an_inconclusive_check_is_unreadable():
+    """Scorecard uses -1 for "could not determine", which is not a low score."""
+    [r] = collectors.scorecard_results(scorecard_data("Code-Review", -1, "internal error"))
+    assert r.outcome is Outcome.UNREADABLE
+
+
+def test_a_non_numeric_score_does_not_raise():
+    [r] = collectors.scorecard_results({"checks": [{"name": "Code-Review", "score": None, "reason": "?"}]})
+    assert r.outcome is Outcome.UNREADABLE
+
+
+def test_unrecognised_checks_are_skipped():
+    assert collectors.scorecard_results(scorecard_data("Some-New-Check", 10, "fine")) == []

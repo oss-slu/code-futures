@@ -215,7 +215,6 @@ DETAIL: dict[tuple[str, Outcome], str] = {
         "practice.readme_sections",
         Outcome.PRESENT,
     ): "Covers {found} of four expected sections. Missing: {missing}.",
-    ("practice.readme_sections", Outcome.ENFORCED): "Covers all four expected sections.",
     (
         "practice.readme_sections",
         Outcome.ABSENT,

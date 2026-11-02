@@ -434,3 +434,37 @@ class TestGlossary:
 
     def test_it_defers_the_outcome_vocabulary_rather_than_repeating_it(self):
         assert "How to read this" in S.GLOSSARY
+
+
+class TestCompleteReadmeIsNotAGap:
+    """A README covering all four sections must not be recommended.
+
+    The probe has no `enforced` rung -- nothing enforces prose -- so a
+    complete README is `present`, which matched the remediation table's
+    `present` clause. The report then recommended "completing the README"
+    directly beneath a line saying it was complete, and displaced a real
+    finding from a list only four items long.
+    """
+
+    def _rendered(self, missing: str, detail: str = ""):
+        return render(
+            _report(
+                [
+                    ProbeResult(
+                        "practice.readme_sections",
+                        Outcome.PRESENT,
+                        attributes={"found": "4" if not missing else "1", "missing": missing},
+                        detail=detail,
+                    )
+                ]
+            )
+        )
+
+    def test_complete_readme_is_not_recommended(self):
+        out = self._rendered("", detail="Covers all four expected sections.")
+        assert "completing the README" not in out
+        assert "Covers all four expected sections." in out
+
+    def test_incomplete_readme_is_still_recommended(self):
+        out = self._rendered("Tech Stack, Installation, Project Structure")
+        assert "completing the readme" in out.lower()

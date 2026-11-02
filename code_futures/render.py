@@ -332,6 +332,13 @@ def _actionable(report: RepositoryReport) -> list[tuple[int, ProbeResult, dict]]
         # unidentifiable case is actionable.
         if r.id == "practice.license" and r.attributes.get("spdx"):
             continue
+        # A README covering all four sections is `present` -- the probe has no
+        # higher rung -- so without this it matched the remediation table's
+        # `present` clause and the report recommended "completing the README"
+        # directly beneath a line saying it was complete, displacing a real
+        # finding from a list only four items long.
+        if r.id == "practice.readme_sections" and not r.attributes.get("missing"):
+            continue
         out.append((spec["rank"], r, spec))
     out.sort(key=lambda x: (x[0], x[1].language or ""))
     return out
