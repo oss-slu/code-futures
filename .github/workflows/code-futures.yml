@@ -399,8 +399,11 @@ jobs:
           # Scoped to wherever the configuration actually is. Requiring one
           # at the root meant a project under `plugin/` enabled this job and
           # then silently skipped the check it exists to run.
+          # `-print -quit`, not `| head -1`: the same SIGPIPE abort as in
+          # `detect`, found by grepping for the pattern rather than waiting
+          # to be told about this one too.
           cfg=$(find . -type d \( -name node_modules -o -name .git -o -name third_party -o -name external \) -prune \
-                -o -name .clang-format -print 2>/dev/null | head -1)
+                -o -name .clang-format -print -quit 2>/dev/null)
           [ -n "$cfg" ] || exit 0
           root=$(dirname "$cfg")
           echo "clang-format configuration: $cfg"
