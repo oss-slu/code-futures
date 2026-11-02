@@ -139,3 +139,39 @@ class TestComplexity:
 
     def test_blank_lines_and_comments_are_skipped(self):
         assert st.complexity("\n\n# comment\n// comment\n") == 0
+
+
+class TestRepositorySpecificVendoring:
+    """`Plugins/` is third-party in Unreal and ordinary everywhere else.
+
+    The bug: the one Unreal project in this portfolio led its report with
+    `Plugins/MetaXR/.../OculusXRHMD.cpp` -- Meta's Oculus plugin -- as the
+    file that would "repay tidying soonest", with three of its six hotspots
+    also Meta's. A team told to tidy code they did not write stops reading.
+    """
+
+    LOG = (
+        "a" * 40 + "\nPlugins/MetaXR/Source/a.cpp\nSource/Game/b.cpp\n\n"
+        "b" * 40 + "\nPlugins/MetaXR/Source/a.cpp\nSource/Game/b.cpp\n\n"
+    )
+
+    def test_plugins_counted_when_nothing_says_otherwise(self):
+        files = {f for c in st.parse_log(self.LOG) for f in c.files}
+        assert "Plugins/MetaXR/Source/a.cpp" in files
+
+    def test_plugins_dropped_for_an_unreal_project(self):
+        extra = frozenset({"Plugins"})
+        files = {f for c in st.parse_log(self.LOG, extra) for f in c.files}
+        assert "Plugins/MetaXR/Source/a.cpp" not in files
+        assert "Source/Game/b.cpp" in files, "the team's own code must survive"
+
+    def test_globally_vendored_paths_still_go(self):
+        log = "c" * 40 + "\nnode_modules/x/y.js\nsrc/app.js\n\n"
+        files = {f for c in st.parse_log(log) for f in c.files}
+        assert files == {"src/app.js"}
+
+    def test_extra_matches_a_whole_segment_not_a_prefix(self):
+        """`PluginsOfOurOwn/` is not `Plugins/`."""
+        log = "d" * 40 + "\nPluginsOfOurOwn/a.cpp\n\n"
+        files = {f for c in st.parse_log(log, frozenset({"Plugins"})) for f in c.files}
+        assert files == {"PluginsOfOurOwn/a.cpp"}

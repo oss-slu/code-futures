@@ -700,7 +700,23 @@ def structural(
     with no external service and nothing to onboard.
     """
     reader = read_file or (lambda p: github.file(repository, p))
-    report = structure.analyse(repository, reader, log_text=log_text)
+
+    # Unreal Engine puts a project's own code in `Source/` and *installed*
+    # plugins -- engine and marketplace code nobody here wrote -- in
+    # `Plugins/`. Without this, the one Unreal project in this portfolio led
+    # its report with Meta's Oculus plugin as the file that would "repay
+    # tidying soonest", and three of its six hotspots were Meta's too.
+    #
+    # Scoped to repositories carrying a `.uproject`, because `Plugins/` is a
+    # strong convention there and means nothing in particular elsewhere.
+    # The cost is real and worth stating: a team developing its own plugin in
+    # `Plugins/` disappears from its own structure section. That is the
+    # smaller error than telling them to tidy Meta's code, and the honest
+    # general fix is per-repository configuration rather than a better guess.
+    extra_vendored = (
+        frozenset({"Plugins"}) if any(p.endswith(".uproject") for p in (paths or [])) else frozenset()
+    )
+    report = structure.analyse(repository, reader, log_text=log_text, extra_vendored=extra_vendored)
 
     if report.unreadable:
         return [

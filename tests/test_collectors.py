@@ -10,6 +10,8 @@ declined to answer would be our failure printed as a team's clean result.
 
 from __future__ import annotations
 
+import contextlib
+
 import pytest
 
 from code_futures import collectors
@@ -310,3 +312,25 @@ def test_a_non_numeric_score_does_not_raise():
 
 def test_unrecognised_checks_are_skipped():
     assert collectors.scorecard_results(scorecard_data("Some-New-Check", 10, "fine")) == []
+
+
+# --- Repository-specific vendoring -----------------------------------------
+
+
+def test_unreal_project_treats_plugins_as_vendored(monkeypatch):
+    """Detected from a `.uproject`, not assumed for every repository."""
+    seen = {}
+
+    def fake_analyse(repository, reader, log_text=None, extra_vendored=frozenset()):
+        seen["extra"] = extra_vendored
+        raise RuntimeError("stop here; the argument is what is under test")
+
+    monkeypatch.setattr(collectors.structure, "analyse", fake_analyse)
+    for paths, expected in (
+        (["MechatronicsVR.uproject", "Source/a.cpp"], frozenset({"Plugins"})),
+        (["package.json", "Plugins/our-own-thing.js"], frozenset()),
+        (None, frozenset()),
+    ):
+        with contextlib.suppress(RuntimeError):
+            collectors.structural("oss-slu/x", paths)
+        assert seen["extra"] == expected, f"for paths={paths}"

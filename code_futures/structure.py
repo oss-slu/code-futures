@@ -89,8 +89,8 @@ _NOISE = re.compile(
 )
 
 
-def is_noise(path: str) -> bool:
-    return bool(_NOISE.search(path)) or is_vendored(path)
+def is_noise(path: str, extra: frozenset[str] = frozenset()) -> bool:
+    return bool(_NOISE.search(path)) or is_vendored(path, extra)
 
 
 @dataclass
@@ -144,7 +144,7 @@ class StructureReport:
         return self.commits < MIN_COMMITS_FOR_HOTSPOTS
 
 
-def parse_log(text: str) -> list[Commit]:
+def parse_log(text: str, extra_vendored: frozenset[str] = frozenset()) -> list[Commit]:
     """Parse `git log --name-only --no-merges --format=%H`.
 
     Merges are excluded. A merge commit's file list is the union of both
@@ -162,7 +162,7 @@ def parse_log(text: str) -> list[Commit]:
             if sha:
                 commits.append(Commit(sha, files))
             sha, files = line, []
-        elif sha and not is_noise(line):
+        elif sha and not is_noise(line, extra_vendored):
             files.append(line)
     if sha:
         commits.append(Commit(sha, files))
@@ -262,7 +262,12 @@ def clone_history(repository: str, workdir: Path) -> str | None:
     return log.stdout if log.returncode == 0 else None
 
 
-def analyse(repository: str, fetch_file, log_text: str | None = None) -> StructureReport:
+def analyse(
+    repository: str,
+    fetch_file,
+    log_text: str | None = None,
+    extra_vendored: frozenset[str] = frozenset(),
+) -> StructureReport:
     """Full structural analysis for one repository.
 
     `fetch_file(path) -> str | None` supplies file contents for the hotspot
@@ -282,7 +287,7 @@ def analyse(repository: str, fetch_file, log_text: str | None = None) -> Structu
     if text is None:
         return StructureReport(unreadable="The repository history could not be read.")
 
-    commits = parse_log(text)
+    commits = parse_log(text, extra_vendored)
     if not commits:
         return StructureReport(unreadable="No commit history was returned.")
 

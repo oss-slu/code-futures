@@ -135,14 +135,19 @@ def resolve_script(scripts: dict[str, str], command: str) -> tuple[str, bool]:
 VENDORED_SUFFIXES: tuple[str, ...] = (".egg-info", ".dist-info", ".egg-link")
 
 
-def is_vendored(path: str) -> bool:
+def is_vendored(path: str, extra: frozenset[str] = frozenset()) -> bool:
     """Whether a path sits inside somebody else's tree, or is generated.
 
     The single most important filter in this module. Without it one
     repository's committed virtualenv makes it the best-tested project in the
     organisation.
+
+    `extra` carries directory names that are vendored *in this repository
+    only*, because some conventions cannot be applied globally. `Plugins/`
+    means installed third-party code in an Unreal Engine project and means
+    nothing in particular anywhere else, so the caller decides.
     """
-    return any(seg in VENDORED or seg.endswith(VENDORED_SUFFIXES) for seg in path.split("/"))
+    return any(seg in VENDORED or seg in extra or seg.endswith(VENDORED_SUFFIXES) for seg in path.split("/"))
 
 
 @dataclass(frozen=True)

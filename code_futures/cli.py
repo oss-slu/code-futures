@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import argparse
 import os
+import re
 import sys
 from datetime import UTC, datetime
 from pathlib import Path
@@ -318,6 +319,9 @@ def _ci_summary(report: RepositoryReport, observations: int) -> str:
 
 
 def cmd_probe(args, cfg) -> int:
+    if _invalid([args.repository]):
+        print(f"not OWNER/REPO: {args.repository!r}", file=sys.stderr)
+        return 1
     auth = github.check_authorisation(cfg.github_org)
     if not auth.ok:
         print(f"authorisation failed: {auth.detail}", file=sys.stderr)
@@ -328,6 +332,15 @@ def cmd_probe(args, cfg) -> int:
     return 0
 
 
+# A repository is `OWNER/REPO`. Anything else is a caller's mistake, and it
+# must not be mistaken for a repository that has nothing in it.
+_REPO_NAME = re.compile(r"^[A-Za-z0-9._-]+/[A-Za-z0-9._-]+$")
+
+
+def _invalid(names: list[str]) -> list[str]:
+    return [n for n in names if not _REPO_NAME.match(n)]
+
+
 def cmd_sweep(args, cfg) -> int:
     auth = github.check_authorisation(cfg.github_org)
     if not auth.ok:
@@ -335,6 +348,17 @@ def cmd_sweep(args, cfg) -> int:
         return 1
 
     names = args.repositories or []
+    # A shell that does not word-split -- zsh, given an unquoted variable --
+    # hands all 29 names over as one argument. Without this the sweep ran
+    # against a "repository" whose name contained spaces, found nothing,
+    # and reported "1 reports, 0 failures". Silent success for a collection
+    # that never happened is the worst outcome available here.
+    bad = _invalid(names)
+    if bad:
+        print(f"REFUSING to sweep: not OWNER/REPO: {bad[0]!r}", file=sys.stderr)
+        if " " in bad[0]:
+            print("  that argument contains spaces -- quote or split the list", file=sys.stderr)
+        return 1
     if not names:
         repos = github.list_repositories(cfg.github_org)
         if repos is None:
