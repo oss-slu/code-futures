@@ -308,3 +308,96 @@ class TestRemediationTriggers:
     def test_identified_licence_is_not_actionable(self):
         r = ProbeResult("practice.license", Outcome.PRESENT, attributes={"path": "LICENSE", "spdx": "MIT"})
         assert S.WHERE_TO_START_NOTHING in render(_report([r]))
+
+
+class TestAnchors:
+    def test_each_space_becomes_a_hyphen(self):
+        """github-slugger does not collapse whitespace runs, so an em-dash
+        heading yields a double hyphen. Collapsing them produces links that
+        silently scroll nowhere."""
+        from code_futures.render import _anchor
+
+        assert _anchor("## **1. Structure**") == "1-structure"
+        assert _anchor("Section 1 — Structure") == "section-1--structure"
+        assert _anchor("Where to start") == "where-to-start"
+
+    def test_every_generated_link_resolves(self):
+        """A table of contents with a broken link is worse than none."""
+        import re
+
+        out = render(fixture.build())
+        seen, real = {}, set()
+        for line in out.split("\n"):
+            m = re.match(r"^#{2,4} (.+)$", line)
+            if m:
+                from code_futures.render import _anchor
+
+                a = _anchor(m.group(1))
+                n = seen.get(a, 0)
+                seen[a] = n + 1
+                real.add(a if n == 0 else f"{a}-{n}")
+        links = re.findall(r"\]\(#([^)]+)\)", out)
+        assert links, "expected internal links"
+        assert [x for x in links if x in real] == links
+
+
+class TestSummary:
+    def test_it_names_the_same_item_the_recommendations_lead_with(self):
+        """Two independent rankings would eventually disagree, and a reader
+        would have no way to tell which to trust."""
+        out = render(fixture.build())
+        summary = out.split("## **How to read this**")[0]
+        lead = out.split("Our suggestion here is **")[1].split("**")[0]
+        assert lead.lower() in summary.lower()
+
+    def test_counts_appear_once_rather_than_twice(self):
+        """The counts used to have a section of their own carrying the same
+        table, which pushed the first real finding down the page."""
+        out = render(fixture.build())
+        assert "## **Outcomes**" not in out
+        assert out.count("| enforced | present | absent | unreadable |") == 1
+
+    def test_unreadable_is_attributed_to_us(self):
+        out = render(fixture.build())
+        assert "our gap rather than this repository's" in out
+
+    def test_clean_report_says_nothing_needs_action(self):
+        r = ProbeResult("practice.license", Outcome.PRESENT, attributes={"path": "LICENSE", "spdx": "MIT"})
+        assert S.SUMMARY_NOTHING_TO_DO in render(_report([r]))
+
+    def test_structure_clauses_are_omitted_not_invented(self):
+        """A summary must not report an absence as a result."""
+        r = ProbeResult("structure.hotspots", Outcome.ABSENT)
+        out = render(_report([r]))
+        assert S.SUMMARY_NO_STRUCTURE in out
+
+
+class TestNoLocalDefensiveness:
+    def test_no_section_intro_claims_it_alone_carries_no_grade(self):
+        """Stating a global property locally implies it does not hold
+        elsewhere: a reviewer read "this section carries no grade" as meaning
+        the other six do."""
+        for section, intro in S.SECTION_INTRO.items():
+            lowered = intro.lower()
+            assert "no grade" not in lowered, section
+            assert "this section carries" not in lowered, section
+
+    def test_the_claim_is_made_once_globally(self):
+        assert "score" in S.NO_SCORE.lower()
+        assert S.NO_SCORE in render(fixture.build())
+
+
+class TestGlossary:
+    def test_it_is_short(self):
+        """The report carries only what you cannot read it without. The
+        expanded vocabulary belongs in the guidebook."""
+        assert len(S.GLOSSARY.split()) < 200
+
+    def test_it_distinguishes_the_two_hotspots(self):
+        """`hotspot` means two different things in one report: a structural
+        one and a Sonar security one. Leaving that implicit is a trap."""
+        assert "Security hotspot" in S.GLOSSARY
+        assert "Unrelated to the above" in S.GLOSSARY
+
+    def test_it_defers_the_outcome_vocabulary_rather_than_repeating_it(self):
+        assert "How to read this" in S.GLOSSARY

@@ -12,6 +12,8 @@ pipeline -- not a policy, just a function nobody calls there.
 
 from __future__ import annotations
 
+import re
+
 from . import strings as S
 from .schema import Outcome, ProbeResult, RepositoryReport, Section
 
@@ -238,6 +240,150 @@ def _join(items: list[str]) -> str:
     return ", ".join(items[:-1]) + " and " + items[-1]
 
 
+def _anchor(heading: str) -> str:
+    """The fragment GitHub will generate for a heading.
+
+    Mirrors github-slugger: strip markup, lowercase, drop anything that is
+    not a word character, space or hyphen, then replace **each** space with a
+    hyphen. Runs of whitespace are not collapsed, so `1. Structure` becomes
+    `1-structure` while an em-dash heading yields a double hyphen. Getting
+    that wrong silently produces links that scroll nowhere.
+    """
+    s = re.sub(r"^\s*#+\s*", "", heading)  # tolerate a full heading line
+    s = re.sub(r"\*\*|`", "", s).strip().lower()
+    s = re.sub(r"[^\w\s-]", "", s)
+    return s.replace(" ", "-")
+
+
+def _contents(report: RepositoryReport) -> str:
+    """A table of contents with a finding count per section."""
+    rows = [["Section", "Findings"]]
+    for i, section in enumerate(Section, 1):
+        heading = f"{i}. {section.value}"
+        n = len(report.by_section(section))
+        rows.append([f"[{heading}](#{_anchor(heading)})", str(n) if n else "—"])
+    return "\n".join([S.CONTENTS_HEADING, "", _table(rows), "", S.CONTENTS_NOTE])
+
+
+def _structure_sentences(report: RepositoryReport) -> str:
+    """One or two clauses on what the structural analysis found.
+
+    Assembled from findings that already exist below, so it cannot disagree
+    with them, and omits anything that was not established rather than
+    reporting an absence as a result.
+    """
+    got = {r.id: r for r in report.by_section(Section.STRUCTURE)}
+    out: list[str] = []
+
+    hs = got.get("structure.hotspots")
+    if hs and hs.outcome is Outcome.PRESENT:
+        n = hs.attributes.get("count", "Some")
+        out.append(f"{n} hotspot{'' if n == '1' else 's'}")
+
+    cp = got.get("structure.change_coupling")
+    coh = got.get("structure.cohesion")
+    if cp and cp.outcome is Outcome.PRESENT:
+        n = cp.attributes.get("count", "several")
+        clause = f"{n} coupled file pair{'' if n == '1' else 's'}"
+        if coh and coh.outcome is Outcome.PRESENT:
+            across = coh.attributes.get("across")
+            if across and across != "0":
+                clause += f" ({across} crossing a module boundary)"
+        out.append(clause)
+
+    ut = got.get("structure.untested_modules")
+    if ut and ut.outcome is Outcome.PRESENT:
+        out.append(f"{ut.attributes.get('count', 'some')} churning files with no test")
+
+    if not out:
+        return ""
+
+    tf = got.get("structure.tidy_first")
+    tail = ""
+    if tf and tf.outcome is Outcome.PRESENT and tf.attributes.get("top"):
+        tail = f" `{tf.attributes['top']}` would repay tidying soonest."
+    return "; ".join(out).capitalize() + "." + tail
+
+
+def _actionable(report: RepositoryReport) -> list[tuple[int, ProbeResult, dict]]:
+    """Findings worth acting on, ranked.
+
+    Shared by the summary and by "Where to start", so the item the summary
+    names is by construction the item the recommendations lead with. Two
+    independent rankings would eventually disagree, and a reader would have
+    no way to tell which to trust.
+    """
+    out: list[tuple[int, ProbeResult, dict]] = []
+    for r in report.results:
+        spec = S.REMEDIATION.get(r.id)
+        if not spec:
+            continue
+        if r.outcome.value not in spec.get("when", ("absent",)):
+            continue
+        # An identified licence is `present` and needs nothing. Only the
+        # unidentifiable case is actionable.
+        if r.id == "practice.license" and r.attributes.get("spdx"):
+            continue
+        out.append((spec["rank"], r, spec))
+    out.sort(key=lambda x: (x[0], x[1].language or ""))
+    return out
+
+
+def _lead_item(report: RepositoryReport) -> dict | None:
+    got = _actionable(report)
+    return got[0][2] if got else None
+
+
+def _summary(report: RepositoryReport) -> str:
+    """The precis at the top.
+
+    Everything here is already stated below. That is what a summary is, and
+    it is also why this is cheap: no new measurement, no new judgement, and
+    nothing that can drift out of step with the sections.
+    """
+    counts = report.counts()
+    n_findings = len(report.results)
+    n_probes = len({r.id for r in report.results})
+    langs = f" in {_join(report.languages)}" if report.languages else ""
+
+    scope = (S.SUMMARY_SCOPE if report.commit else S.SUMMARY_SCOPE_NO_COMMIT).format(
+        probes=_spell(n_probes) if n_probes <= 10 else n_probes,
+        findings=n_findings,
+        languages=langs,
+        commit=report.commit or "",
+    )
+    parts = [S.SUMMARY_HEADING, "", scope.capitalize() if scope[0].isalpha() else scope, ""]
+    parts.append(_table([[o.value for o in _OUTCOME_ORDER], [str(counts[o]) for o in _OUTCOME_ORDER]]))
+    parts.append("")
+
+    sentences = _structure_sentences(report)
+    parts.append(S.SUMMARY_STRUCTURE.format(sentences=sentences) if sentences else S.SUMMARY_NO_STRUCTURE)
+    parts.append("")
+
+    lead = _lead_item(report)
+    if lead is None:
+        parts.append(S.SUMMARY_NOTHING_TO_DO)
+    else:
+        label = lead["label"]
+        parts.append(
+            S.SUMMARY_FIRST_STEP.format(
+                item=label[0].upper() + label[1:],
+                where=_anchor("Where to start"),
+            )
+        )
+    bad = report.unreadable()
+    if bad:
+        parts += [
+            "",
+            S.SUMMARY_UNREADABLE.format(
+                count=_spell(len(bad)).capitalize(),
+                s="" if len(bad) == 1 else "s",
+                probes=_join([f"`{r.id}`" for r in bad[:4]]),
+            ),
+        ]
+    return "\n".join(parts)
+
+
 def _where_to_start(report: RepositoryReport) -> str:
     """Rank the actionable findings and name one.
 
@@ -250,19 +396,7 @@ def _where_to_start(report: RepositoryReport) -> str:
     collection failure would be the worst instance of the mistake the fourth
     outcome exists to prevent.
     """
-    actionable = []
-    for r in report.results:
-        spec = S.REMEDIATION.get(r.id)
-        if not spec:
-            continue
-        if r.outcome.value not in spec.get("when", ("absent",)):
-            continue
-        # An identified licence is `present` and needs nothing. Only the
-        # unidentifiable case is actionable.
-        if r.id == "practice.license" and r.attributes.get("spdx"):
-            continue
-        actionable.append((spec["rank"], r, spec))
-    actionable.sort(key=lambda t: (t[0], t[1].language or ""))
+    actionable = _actionable(report)
 
     parts = [S.WHERE_TO_START_INTRO, ""]
     if not actionable:
@@ -313,19 +447,24 @@ def render(
     if report.wholly_unreadable:
         p += [S.WHOLLY_UNREADABLE, "", "---", ""]
 
-    p += [S.HOW_TO_READ, "", "---", "", "## **Outcomes**", ""]
+    # Summary first. The counts live here rather than in a section of their
+    # own: an "Outcomes" heading carrying the same table was duplication, and
+    # it pushed the first real finding further down the page.
+    p += [_summary(report), "", "---", ""]
 
-    counts = report.counts()
-    p.append(_table([["Outcome", "Count"]] + [[o.value, str(counts[o])] for o in _OUTCOME_ORDER]))
-    p += ["", S.NO_SCORE, ""]
+    p += [S.HOW_TO_READ, ""]
 
     n_findings = len(report.results)
     n_probes = len({r.id for r in report.results})
     if n_findings != n_probes:
         p += [S.MULTI_LANGUAGE_COUNT.format(findings=n_findings, probes=n_probes), ""]
 
+    p += [S.NO_SCORE, ""]
+
     if report.contributors == 1:
         p += [S.SINGLE_CONTRIBUTOR, ""]
+
+    p += [_contents(report), ""]
 
     for i, section in enumerate(Section, 1):
         p += ["---", "", f"## **{i}. {section.value}**", "", S.SECTION_INTRO[section], ""]
@@ -348,5 +487,7 @@ def render(
     else:
         p += ["Every probe returned an answer.", ""]
 
-    p += ["---", "", _where_to_start(report), "", "---", "", S.FOOTER, ""]
+    p += ["---", "", _where_to_start(report), ""]
+    p += ["---", "", S.GLOSSARY, ""]
+    p += ["---", "", S.FOOTER, ""]
     return "\n".join(p)
