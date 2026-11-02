@@ -1,0 +1,588 @@
+# Code Futures — the reusable workflow teams call.
+#
+# A team adopts this by adding one file to their repository. See the README,
+# or section 6 of the guidebook, for the block to paste.
+#
+# ## Three things worth knowing before you edit this file
+#
+# **Nothing here fails a build.** Every job is `continue-on-error`. That is
+# load-bearing rather than courteous: a team whose build breaks on the day
+# they adopt a quality tool learns that quality tools are an obstacle, and
+# they are not wrong to conclude that from the evidence. Making a check
+# blocking is the team's decision, and section 7 of the guidebook covers what
+# it costs.
+#
+# **There is no `stack` input.** Every job checks for its own manifest and
+# skips when absent. Fewer inputs, fewer ways to misconfigure, nothing to
+# debug on a deadline -- and the polyglot repositories get both toolchains
+# instead of having to pick one. Several products here are Python *and*
+# React.
+#
+# **`summarize` runs `if: always()`.** If it only ran on success, a
+# repository with failing lint would produce no artifact and vanish from its
+# own report, making failure indistinguishable from never having adopted the
+# workflow. This is the single easiest thing to get wrong here.
+#
+# ## What this does not do
+#
+# It does not produce a report. It writes an artifact of facts, every one of
+# them already derivable by anyone who can clone the repository. The composed
+# report is assembled outside CI and reaches your tech lead. That is why this
+# job is called `summarize` rather than `report`: the two being easy to
+# confuse is the only route by which an internal document could end up
+# assembled in a public pipeline.
+
+name: Code Futures
+
+on:
+  workflow_call:
+    inputs:
+      ref:
+        description: Version of the Code Futures tooling to run.
+        type: string
+        # Pinned to the tag this file ships under, so one tag pins the
+        # workflow and the scripts it runs together. A team pinning
+        # `@v1.0.0` gets exactly this, which is the reproducibility an
+        # immutable tag is supposed to buy.
+        default: v1.0.0
+      python-version:
+        type: string
+        default: "3.12"
+      node-version:
+        type: string
+        default: "20"
+
+permissions:
+  contents: read
+
+jobs:
+  # --------------------------------------------------------------------
+  detect:
+    name: detect stacks
+    runs-on: ubuntu-latest
+    # Advisory like every other job. Without this a checkout or shell failure
+    # here fails the caller's build, which is the one promise this workflow
+    # makes that must not break.
+    continue-on-error: true
+    outputs:
+      python: ${{ steps.d.outputs.python }}
+      node: ${{ steps.d.outputs.node }}
+      rust: ${{ steps.d.outputs.rust }}
+      cpp: ${{ steps.d.outputs.cpp }}
+      node_dir: ${{ steps.d.outputs.node_dir }}
+      cpp_dir: ${{ steps.d.outputs.cpp_dir }}
+      python_dir: ${{ steps.d.outputs.python_dir }}
+      rust_dir: ${{ steps.d.outputs.rust_dir }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - id: d
+        name: Look for a manifest of each kind
+        # Manifests are searched for anywhere, not only at the root. Only 13
+        # of 39 Node repositories in this organisation keep their only
+        # manifest at the root; `frontend/`, `Frontend/`, `client_app/`,
+        # `client-app/`, `api/` and `app/` all occur, and a root-only check
+        # finds roughly half of what is there.
+        #
+        # Vendored trees are excluded. One repository commits its `.venv`,
+        # and another vendors an upstream package carrying more
+        # configuration than the team's own code.
+        run: |
+          set -euo pipefail
+          # Pruned by directory *name* at any depth. Matching `-path
+          # ./node_modules` only prunes the top level, so a committed
+          # `backend/.venv` or `frontend/node_modules` was still searched and
+          # a dependency's own manifest could select the stack and the
+          # working directory.
+          prune='-name node_modules -o -name .venv -o -name venv -o -name vendor -o -name third_party -o -name .git -o -name site-packages -o -name target -o -name dist -o -name build'
+
+          # One manifest set per language, used for both the flag and the
+          # directory. They disagreed: the flag accepted `setup.cfg` and
+          # `Pipfile` and the directory lookup did not, so a repository whose
+          # only Python manifest was `backend/Pipfile` ran with the wrong
+          # working directory.
+          PY_M=(-name pyproject.toml -o -name requirements.txt -o -name setup.py -o -name setup.cfg -o -name Pipfile)
+          RS_M=(-name Cargo.toml)
+          CPP_M=(-name .clang-format -o -name .clang-tidy -o -name meson.build -o -name CMakeLists.txt -o -name '*.uproject')
+
+          first() {
+            # `-print -quit` rather than piping to `head -1`. With enough
+            # matches, `head` closes the pipe while `find` is still writing;
+            # `find` takes SIGPIPE, `pipefail` propagates the failure and
+            # `errexit` aborts this step partway through -- so the remaining
+            # stack outputs never get written and their jobs silently skip.
+            # shellcheck disable=SC2086
+            find . -type d \( $prune \) -prune -o -type f \( "$@" \) -print -quit 2>/dev/null
+          }
+          {
+            m=$(first "${PY_M[@]}");  echo "python=$([ -n "$m" ] && echo true || echo false)"; echo "python_dir=$([ -n "$m" ] && dirname "$m" || echo .)"
+            m=$(first -name package.json); echo "node=$([ -n "$m" ] && echo true || echo false)"; echo "node_dir=$([ -n "$m" ] && dirname "$m" || echo .)"
+            m=$(first "${RS_M[@]}");  echo "rust=$([ -n "$m" ] && echo true || echo false)"; echo "rust_dir=$([ -n "$m" ] && dirname "$m" || echo .)"
+            m=$(first "${CPP_M[@]}"); echo "cpp=$([ -n "$m" ] && echo true || echo false)"; echo "cpp_dir=$([ -n "$m" ] && dirname "$m" || echo .)"
+          } | tee -a "$GITHUB_OUTPUT"
+
+  # --------------------------------------------------------------------
+  python:
+    name: python
+    needs: detect
+    if: needs.detect.outputs.python == 'true'
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    defaults:
+      run:
+        # Where the manifest is, which is not always the root.
+        working-directory: ${{ needs.detect.outputs.python_dir }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ inputs.python-version }}
+
+      - run: mkdir -p "$GITHUB_WORKSPACE/code-futures-obs"
+
+      - name: Lint
+        continue-on-error: true
+        run: |
+          set +e
+          pip install --quiet ruff
+          # Use the project's own ruff configuration when it has one. With no
+          # configuration, fall back to the error-and-undefined-name subset
+          # rather than the full default rule set: landing hundreds of style
+          # findings on a team who did not ask for them teaches only that the
+          # tool is noise. This subset is the same one the GitHub Actions
+          # Python starter template uses, and most repositories here that
+          # lint at all already use it.
+          # Four configuration forms, any of which means the project chose
+          # its own rules: a `[tool.ruff]` or `[tool.ruff.lint]` table in
+          # pyproject, or a `ruff.toml` / `.ruff.toml` of its own.
+          if grep -qs -e '\[tool\.ruff\]' -e '\[tool\.ruff\.' pyproject.toml \
+             || [ -f ruff.toml ] || [ -f .ruff.toml ]; then
+            ruff check . ; code=$?
+            detail="ruff, using this project's configuration"
+          else
+            ruff check --select=E9,F63,F7,F82 . ; code=$?
+            detail="ruff, error and undefined-name checks only (no ruff config found)"
+          fi
+          outcome=$([ $code -eq 0 ] && echo enforced || echo enforced)
+          printf '{"probe":"lint","language":"Python","outcome":"%s","tool":"ruff","detail":"%s","blocking":"false","passed":"%s"}\n' \
+            "$outcome" "$detail" "$([ $code -eq 0 ] && echo true || echo false)" \
+            > "$GITHUB_WORKSPACE/code-futures-obs"/python-lint.json
+
+      - name: Format check
+        continue-on-error: true
+        # Only when a formatter is configured. Running a format check against
+        # a codebase nobody has formatted reports every file and says nothing.
+        run: |
+          set +e
+          # Run whatever the project configured, and record that tool. Ruff
+          # does not read `[tool.black]`, so checking a Black project with
+          # Ruff's 88-character default would flag correctly formatted code
+          # and attribute the finding to the wrong tool.
+          if grep -qs -e '\[tool\.black\]' pyproject.toml; then
+            pip install --quiet black
+            black --check . ; code=$?
+            tool="black"
+          elif grep -qs -e '\[tool\.ruff\]' -e '\[tool\.ruff\.' pyproject.toml \
+               || [ -f ruff.toml ] || [ -f .ruff.toml ]; then
+            pip install --quiet ruff
+            ruff format --check . ; code=$?
+            tool="ruff format"
+          else
+            exit 0
+          fi
+          jq -n --arg tool "$tool" --arg passed "$([ $code -eq 0 ] && echo true || echo false)" \
+            '{probe:"format",language:"Python",outcome:"enforced",tool:$tool,detail:"checked in CI",blocking:"false",passed:$passed}' \
+            > "$GITHUB_WORKSPACE/code-futures-obs"/python-format.json
+
+      - name: Test
+        continue-on-error: true
+        # The one thing CI can establish that no file inspection can: not
+        # that a test runner is configured, but that it ran and what it did.
+        run: |
+          set +e
+          pip install --quiet pytest
+          [ -f requirements.txt ] && pip install --quiet -r requirements.txt
+          pip install --quiet -e . 2>/dev/null
+          out=$(pytest -q 2>&1); code=$?
+          echo "$out" | tail -20
+          summary=$(echo "$out" | grep -oE '[0-9]+ (passed|failed|error)' | paste -sd', ' - || true)
+          if echo "$out" | grep -q 'no tests ran\|collected 0 items'; then
+            # Emit nothing. We installed pytest ourselves, so finding no
+            # tests says only that the repository has none -- which is what
+            # file inspection already concluded. Writing `present` here would
+            # manufacture a capability out of our own install and overwrite
+            # a correct inference.
+            echo "pytest collected no tests; leaving the inferred finding intact"
+          else
+            printf '{"probe":"test.unit","outcome":"enforced","tool":"pytest","detail":"%s","blocking":"false","passed":"%s"}\n' \
+              "${summary:-pytest ran}" "$([ $code -eq 0 ] && echo true || echo false)" \
+              > "$GITHUB_WORKSPACE/code-futures-obs"/python-test.json
+          fi
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: cf-obs-python
+          path: code-futures-obs/
+          if-no-files-found: ignore
+
+  # --------------------------------------------------------------------
+  node:
+    name: node
+    needs: detect
+    if: needs.detect.outputs.node == 'true'
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ inputs.node-version }}
+
+      - run: mkdir -p "$GITHUB_WORKSPACE/code-futures-obs"
+
+      - name: Find the package directory
+        id: pkg
+        # The manifest is frequently not at the root, and the directory name
+        # varies in case and separator: `frontend`, `Frontend`, `client_app`,
+        # `client-app`. Taking the first non-vendored `package.json` is crude
+        # and right more often than assuming the root.
+        run: |
+          set -euo pipefail
+          # `detect` already resolved this with full exclusions. Searching
+          # again here dropped them, so install, lint and test could run
+          # against a vendored package and publish findings about somebody
+          # else's code as this project's results.
+          echo "dir=${{ needs.detect.outputs.node_dir }}" | tee -a "$GITHUB_OUTPUT"
+
+      - name: Install
+        continue-on-error: true
+        working-directory: ${{ steps.pkg.outputs.dir }}
+        run: npm install --no-audit --no-fund || npm install --legacy-peer-deps --no-audit --no-fund
+
+      - name: Lint
+        continue-on-error: true
+        working-directory: ${{ steps.pkg.outputs.dir }}
+        # `npm run lint` is the most reliable lint signal in this
+        # organisation: 23 of 39 Node repositories define it. Where it is
+        # absent we do not substitute our own eslint run, because a team with
+        # no lint configuration would get a wall of findings from a rule set
+        # they never chose.
+        run: |
+          set +e
+          if node -e "process.exit(require('./package.json').scripts?.lint?0:1)"; then
+            npm run lint; code=$?
+            jq -n --arg passed "$([ $code -eq 0 ] && echo true || echo false)" \
+              '{probe:"lint",language:"JavaScript",outcome:"enforced",tool:"npm run lint",detail:"the project'"'"'s own lint script",blocking:"false",passed:$passed}' \
+              > "$GITHUB_WORKSPACE/code-futures-obs/node-lint.json"
+          fi
+
+      - name: Test
+        continue-on-error: true
+        working-directory: ${{ steps.pkg.outputs.dir }}
+        # A `test` script is not evidence that tests exist. Observed in this
+        # organisation: `echo "No tests specified" && exit 0`, the same with
+        # `exit 1`, and `"test": "next lint"`. Recording any of those as a
+        # test run would manufacture a suite out of an `echo`, so the script
+        # body is inspected before it is believed.
+        run: |
+          set +e
+          script=$(node -p "require('./package.json').scripts?.test || ''")
+          obs="$GITHUB_WORKSPACE/code-futures-obs/node-test.json"
+          case "$script" in
+            # A `test` script that runs no tests. Observed in this
+            # organisation: an `echo`, an `exit 1`, and `next lint` -- which
+            # runs the linter and would otherwise be recorded as a passing
+            # unit-test suite, overriding the inference that correctly
+            # classifies it as lint.
+            # Lint-only, matched as a whole command rather than by the
+            # substring `lint` -- which also matched real suites such as
+            # `npm run lint && vitest run` and `jest tests/lint.test.js`,
+            # whose `absent` observation then overrode a correct inference.
+            ""|echo*|*"no test specified"*|*"No tests specified"*|"next lint"|"eslint"|"eslint "*|"npm run lint"|"biome check"*)
+              jq -n --arg s "$script" \
+                '{probe:"test.unit",outcome:"absent",detail:("the test script runs no tests: " + $s),blocking:"false"}' \
+                > "$obs"
+              ;;
+            # End-to-end runners reach this branch too, and crediting
+            # `playwright test` as a unit suite contradicts the detector,
+            # which classifies it as `test.e2e`.
+            *playwright*|*cypress*)
+              CI=true npm test --silent; code=$?
+              jq -n --arg s "$script" --arg passed "$([ $code -eq 0 ] && echo true || echo false)" \
+                '{probe:"test.e2e",outcome:"enforced",tool:"npm test",detail:("ran: " + $s),blocking:"false",passed:$passed}' \
+                > "$obs"
+              ;;
+            *)
+              CI=true npm test --silent; code=$?
+              # Serialised with jq rather than interpolated into a
+              # JSON-shaped printf. A script such as
+              # `jest --testMatch="**/*.test.js"` contains quotes, and an
+              # unescaped one produces invalid JSON that `observe.load()`
+              # discards in silence.
+              jq -n --arg s "$script" --arg passed "$([ $code -eq 0 ] && echo true || echo false)" \
+                '{probe:"test.unit",outcome:"enforced",tool:"npm test",detail:("ran: " + $s),blocking:"false",passed:$passed}' \
+                > "$obs"
+              ;;
+          esac
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: cf-obs-node
+          path: code-futures-obs/
+          if-no-files-found: ignore
+
+  # --------------------------------------------------------------------
+  rust:
+    name: rust
+    needs: detect
+    if: needs.detect.outputs.rust == 'true'
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    defaults:
+      run:
+        working-directory: ${{ needs.detect.outputs.rust_dir }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+
+      - run: mkdir -p "$GITHUB_WORKSPACE/code-futures-obs"
+
+      - name: Lint, format, test
+        continue-on-error: true
+        run: |
+          set +e
+          cargo clippy --all-targets -- -D warnings; lint=$?
+          cargo fmt --all -- --check; fmt=$?
+          cargo test; test=$?
+          {
+            printf '{"probe":"lint","language":"Rust","outcome":"enforced","tool":"clippy","detail":"cargo clippy","blocking":"false","passed":"%s"}\n' "$([ $lint -eq 0 ] && echo true || echo false)"
+          } > "$GITHUB_WORKSPACE/code-futures-obs"/rust-lint.json
+          printf '{"probe":"format","language":"Rust","outcome":"enforced","tool":"rustfmt","detail":"cargo fmt --check","blocking":"false","passed":"%s"}\n' \
+            "$([ $fmt -eq 0 ] && echo true || echo false)" > "$GITHUB_WORKSPACE/code-futures-obs"/rust-format.json
+          printf '{"probe":"test.unit","outcome":"enforced","tool":"cargo test","detail":"cargo test","blocking":"false","passed":"%s"}\n' \
+            "$([ $test -eq 0 ] && echo true || echo false)" > "$GITHUB_WORKSPACE/code-futures-obs"/rust-test.json
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: cf-obs-rust
+          path: code-futures-obs/
+          if-no-files-found: ignore
+
+  # --------------------------------------------------------------------
+  cpp:
+    name: c / c++
+    needs: detect
+    if: needs.detect.outputs.cpp == 'true'
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - run: mkdir -p "$GITHUB_WORKSPACE/code-futures-obs"
+
+      - name: Format check
+        continue-on-error: true
+        # Format only. Neither C/C++ project in this portfolio can be built
+        # on a bare runner: one needs the Unreal Engine toolchain and the
+        # other's meson test step is commented out upstream. A format check
+        # needs no toolchain, works on both, and is the check they already
+        # run themselves.
+        run: |
+          set +e
+          # Scoped to wherever the configuration actually is. Requiring one
+          # at the root meant a project under `plugin/` enabled this job and
+          # then silently skipped the check it exists to run.
+          # `-print -quit`, not `| head -1`: the same SIGPIPE abort as in
+          # `detect`, found by grepping for the pattern rather than waiting
+          # to be told about this one too.
+          cfg=$(find . -type d \( -name node_modules -o -name .git -o -name third_party -o -name external \) -prune \
+                -o -name .clang-format -print -quit 2>/dev/null)
+          [ -n "$cfg" ] || exit 0
+          root=$(dirname "$cfg")
+          echo "clang-format configuration: $cfg"
+          pip install --quiet clang-format
+
+          # Vendored C++ cannot be excluded by directory name here. One repo
+          # keeps first-party plugin code and a third-party SDK side by side
+          # under `Plugins/`, and checks only its own tree. Respect a
+          # `.clang-format-ignore` if present and otherwise skip the paths
+          # that are conventionally not ours.
+          git ls-files -- "$root/*.c" "$root/*.cc" "$root/*.cpp" "$root/*.cxx" "$root/*.h" "$root/*.hpp" \
+            | grep -vE '(^|/)(third_party|thirdparty|external|vendor|extern|_deps|subprojects)/' \
+            > cf-files.txt
+          count=$(wc -l < cf-files.txt | tr -d ' ')
+          [ "$count" -eq 0 ] && exit 0
+
+          clang-format --dry-run -Werror --files=cf-files.txt 2>clang-format.log
+          code=$?
+          tail -40 clang-format.log || true
+          jq -n --arg n "$count" --arg passed "$([ $code -eq 0 ] && echo true || echo false)" \
+            '{probe:"format",language:"C/C++",outcome:"enforced",tool:"clang-format",
+              detail:($n + " files checked"),blocking:"false",passed:$passed}' \
+            > "$GITHUB_WORKSPACE/code-futures-obs"/cpp-format.json
+
+      - name: Tests, where a test runner exists
+        continue-on-error: true
+        # `meson compile` and `cmake --build` are not run. A build is not a
+        # test, and recording one as the other is the false positive that
+        # `./gradlew assembleRelease` taught us to avoid.
+        run: |
+          set +e
+          dir=$(find . -name meson.build -not -path './subprojects/*' -print -quit)
+          if [ -n "$dir" ]; then
+            cd "$(dirname "$dir")" || exit 0
+            pip install --quiet meson ninja
+            obs="$GITHUB_WORKSPACE/code-futures-obs/cpp-test.json"
+            if ! meson setup build >setup.log 2>&1; then
+              # Configuration failed, usually a missing native dependency.
+              # No test ran, so there is nothing to report about the tests --
+              # and reporting one anyway is how a failed scan becomes a
+              # passing claim.
+              tail -20 setup.log || true
+              jq -n '{probe:"test.unit",outcome:"unreadable",reason:"meson setup did not complete, so no test ran."}' > "$obs"
+            else
+              meson test -C build
+              code=$?
+              jq -n --arg passed "$([ $code -eq 0 ] && echo true || echo false)" \
+                '{probe:"test.unit",outcome:"enforced",tool:"meson test",detail:"meson test",blocking:"false",passed:$passed}' > "$obs"
+            fi
+          fi
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: cf-obs-cpp
+          path: code-futures-obs/
+          if-no-files-found: ignore
+
+  # --------------------------------------------------------------------
+  sast:
+    name: sast
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    # **This is the permission the caller has to grant.** A reusable workflow
+    # cannot elevate beyond the workflow that called it, so `security-events:
+    # write` must be declared in the caller's file. Omitting it is the most
+    # likely reason a first attempt fails, and the error does not obviously
+    # point back at it.
+    permissions:
+      contents: read
+      security-events: write
+    steps:
+      - uses: actions/checkout@v4
+      - id: langs
+        # CodeQL needs to be told which languages to analyse, and fails
+        # rather than skipping when given none.
+        run: |
+          set -euo pipefail
+          langs=""
+          [ -n "$(find . -path ./node_modules -prune -o -name '*.py' -print -quit)" ] && langs="python"
+          if [ -n "$(find . -path ./node_modules -prune -o \( -name '*.js' -o -name '*.ts' -o -name '*.jsx' -o -name '*.tsx' \) -print -quit)" ]; then
+            langs="${langs:+$langs,}javascript-typescript"
+          fi
+          echo "langs=$langs" | tee -a "$GITHUB_OUTPUT"
+
+      - uses: github/codeql-action/init@v3
+        if: steps.langs.outputs.langs != ''
+        with:
+          languages: ${{ steps.langs.outputs.langs }}
+      - uses: github/codeql-action/autobuild@v3
+        if: steps.langs.outputs.langs != ''
+      - uses: github/codeql-action/analyze@v3
+        id: analyze
+        if: steps.langs.outputs.langs != ''
+
+      - name: Record that SAST ran
+        if: always()
+        # Without this the artifact reports `security.sast` as unreadable even
+        # when the analysis above succeeded: `code-futures ci` sees only local
+        # evidence, and nothing local can observe a CodeQL run.
+        run: |
+          set -euo pipefail
+          mkdir -p "$GITHUB_WORKSPACE/code-futures-obs"
+          langs='${{ steps.langs.outputs.langs }}'
+          if [ -z "$langs" ]; then
+            jq -n '{probe:"security.sast",outcome:"absent",detail:"no source CodeQL analyses was found"}' \
+              > "$GITHUB_WORKSPACE/code-futures-obs"/sast.json
+          else
+            jq -n --arg langs "$langs" \
+              '{probe:"security.sast",outcome:"enforced",tool:"CodeQL",detail:("CodeQL analysed " + $langs),blocking:"false"}' \
+              > "$GITHUB_WORKSPACE/code-futures-obs"/sast.json
+          fi
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: cf-obs-sast
+          path: code-futures-obs/
+          if-no-files-found: ignore
+
+  # --------------------------------------------------------------------
+  summarize:
+    name: summarize
+    needs: [detect, python, node, rust, cpp, sast]
+    # **Never remove this.** On success-only, a repository with a failing
+    # check would produce no artifact and disappear from its own report,
+    # which makes a failure look identical to non-adoption.
+    if: always()
+    # `if: always()` only makes this job *start* after a failed dependency. It
+    # does not make this job's own failures advisory, and a checkout or install
+    # failure here would fail the caller.
+    continue-on-error: true
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out the repository under analysis
+        uses: actions/checkout@v4
+        with:
+          # Required. The structural analysis reads commit history, and a
+          # shallow checkout has one commit -- which would make every
+          # structural finding vacuous rather than absent. `code-futures ci`
+          # refuses to run on a shallow checkout rather than reporting from
+          # truncated history.
+          fetch-depth: 0
+          path: subject
+
+      - name: Check out the Code Futures tooling
+        uses: actions/checkout@v4
+        with:
+          repository: oss-slu/code-futures
+          ref: ${{ inputs.ref }}
+          path: tooling
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install --quiet ./tooling
+
+      - name: Collect what the jobs observed
+        uses: actions/download-artifact@v4
+        with:
+          pattern: cf-obs-*
+          path: observations
+          merge-multiple: true
+        continue-on-error: true
+
+      - name: Write the artifact
+        # Writes `code-futures.json` and a terse outcome table. It does not
+        # render a report, and that absence is the mechanism rather than a
+        # policy: job summaries on a public repository are readable by
+        # anyone, and the composed report is internal.
+        run: |
+          code-futures ci \
+            --path subject \
+            --repository "${{ github.repository }}" \
+            --observations observations \
+            --output code-futures.json
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: code-futures
+          path: code-futures.json

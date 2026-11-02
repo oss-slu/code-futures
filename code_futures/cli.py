@@ -13,12 +13,13 @@ report rather than an error.
 from __future__ import annotations
 
 import argparse
+import os
 import sys
 from datetime import UTC, datetime
 from pathlib import Path
 
-from . import collectors, config, github, local, render
-from .schema import PROBES, Outcome, ProbeResult, RepositoryReport, Snapshot
+from . import collectors, config, github, local, observe, render
+from .schema import PROBES, Outcome, ProbeResult, RepositoryReport, Section, Snapshot
 
 
 def _now() -> str:
@@ -197,6 +198,123 @@ def cmd_self(args, cfg) -> int:
     return 0
 
 
+def _analyse_local(root: Path, repository: str):
+    """Local inference shared by `self` and `ci`."""
+    paths = local.tree(root)
+    if paths is None:
+        return None, []
+    wfs = local.workflows(root) or {}
+
+    def reader(p):
+        return local.file(root, p)
+
+    results = collectors.local_practice(paths, reader)
+    caps, languages = collectors.capabilities(repository, paths=paths, wfs=wfs, read_file=reader, _local=True)
+    results += caps
+    results += collectors.structural(repository, paths, log_text=local.log(root), read_file=reader)
+    return results, languages
+
+
+def cmd_ci(args, cfg) -> int:
+    """Write a Code Futures artifact from inside a CI run.
+
+    **This never renders a report, and the absence is the mechanism rather
+    than a policy.** CI output on a public repository is public; the composed
+    report is internal and is assembled elsewhere. Keeping `render` out of
+    this function is what stops an internal document being produced in a
+    public pipeline, and it is why the workflow job is called `summarize`.
+
+    What it writes is the artifact: facts about public code, every one of
+    them already derivable by anyone who can clone the repository.
+    """
+    root = Path(args.path).resolve()
+    repository = args.repository or os.environ.get("GITHUB_REPOSITORY", "unknown/unknown")
+
+    # A shallow checkout has one commit. Every structural finding computed
+    # from it would be wrong rather than missing, which is the worse failure,
+    # so this refuses rather than reporting from truncated history.
+    if local.is_shallow(root):
+        print(
+            "refusing: shallow checkout. Structural findings from truncated history "
+            "would be wrong rather than missing. Use actions/checkout with fetch-depth: 0.",
+            file=sys.stderr,
+        )
+        return 1
+
+    inferred, languages = _analyse_local(root, repository)
+    if inferred is None:
+        print(f"not a git repository: {root}", file=sys.stderr)
+        return 1
+
+    observed = observe.load(Path(args.observations)) if args.observations else []
+    results = observe.merge(inferred, observed)
+
+    seen = {r.id for r in results}
+    for probe in PROBES:
+        if probe.id not in seen:
+            results.append(
+                ProbeResult(
+                    id=probe.id,
+                    outcome=Outcome.UNREADABLE,
+                    attributes={"reason": "Not collected in this run."},
+                    source="none",
+                )
+            )
+
+    sha, _ = local.head(root)
+    report = RepositoryReport(
+        repository=repository,
+        collected_at=_now(),
+        commit=os.environ.get("GITHUB_SHA", sha or "")[:7] or None,
+        languages=languages,
+        results=results,
+        contributors=local.contributor_count(root),
+    )
+
+    out = Path(args.output)
+    out.write_text(Snapshot(collected_at=report.collected_at, reports=[report]).dumps())
+    print(f"wrote {out}", file=sys.stderr)
+
+    summary = _ci_summary(report, len(observed))
+    if step_summary := os.environ.get("GITHUB_STEP_SUMMARY"):
+        Path(step_summary).write_text(summary)
+    print(summary)
+    return 0
+
+
+def _ci_summary(report: RepositoryReport, observations: int) -> str:
+    """A terse table for the job summary.
+
+    Not the report. Job summaries on a public repository are readable by
+    anyone with no account, so this carries outcomes and nothing that frames
+    them -- no guidance, no recommendations, no prose about what a team
+    should do next. Those belong in the document their tech lead receives.
+    """
+    counts = report.counts()
+    lines = [
+        "## Code Futures",
+        "",
+        f"`{report.repository}` · schema `code-futures/v1` · {observations} observation(s) from this run",
+        "",
+        "| Outcome | Count |",
+        "| --- | --- |",
+    ]
+    lines += [f"| {o.value} | {counts[o]} |" for o in Outcome]
+    lines += ["", "| Probe | Outcome |", "| --- | --- |"]
+    for section in Section:
+        for r in report.by_section(section):
+            label = f"`{r.id}`" + (f" ({r.language})" if r.language else "")
+            lines.append(f"| {label} | {r.outcome.value} |")
+    lines += [
+        "",
+        "These are facts about this repository, all of them derivable from the "
+        "code itself. The composed report, with what the findings mean and what "
+        "to do about them, is assembled outside CI and reaches your tech lead.",
+        "",
+    ]
+    return "\n".join(lines)
+
+
 def cmd_probe(args, cfg) -> int:
     auth = github.check_authorisation(cfg.github_org)
     if not auth.ok:
@@ -269,6 +387,12 @@ def main(argv: list[str] | None = None) -> int:
     sf.add_argument("-o", "--output", help="write markdown here instead of stdout")
     sf.add_argument("--remote", action="store_true", help="also run Scorecard and Sonar")
 
+    sc = sub.add_parser("ci", help="write an artifact from inside a CI run (never a report)")
+    sc.add_argument("--path", default=".", help="repository root (default: cwd)")
+    sc.add_argument("--repository", default=None, help="defaults to $GITHUB_REPOSITORY")
+    sc.add_argument("--observations", default=None, help="directory of observation fragments")
+    sc.add_argument("-o", "--output", default="code-futures.json")
+
     sr = sub.add_parser("render", help="render a snapshot to markdown reports")
     sr.add_argument("snapshot")
     sr.add_argument("-o", "--output")
@@ -278,6 +402,7 @@ def main(argv: list[str] | None = None) -> int:
     return {
         "doctor": cmd_doctor,
         "self": cmd_self,
+        "ci": cmd_ci,
         "probe": cmd_probe,
         "sweep": cmd_sweep,
         "render": cmd_render,

@@ -272,3 +272,87 @@ class TestMerge:
     def test_config_alone_is_present_not_enforced(self):
         merged = detect.merge(detect.detect_config({".eslintrc.json": "{}"}), [])
         assert merged[0].enforced is False
+
+
+class TestCppDetection:
+    """Drawn from the two C/C++ projects in this portfolio, which share
+    almost no toolchain. One is Unreal Engine -- `.uproject`, `.uplugin`,
+    `*.Build.cs`, no CMake anywhere -- and the other is meson with a CMake
+    test subdirectory. A detector assuming CMake would have found neither.
+    """
+
+    def test_clang_format_config_is_a_format_signal(self):
+        got = detect.detect_config({".clang-format": "BasedOnStyle: LLVM\n"})
+        assert [(f.kind, f.language, f.tool) for f in got] == [("format", "C/C++", "clang-format")]
+
+    def test_clang_tidy_config_is_a_lint_signal(self):
+        got = detect.detect_config({"Plugins/MCPUnreal/.clang-tidy": "Checks: '*'\n"})
+        assert [(f.kind, f.tool) for f in got] == [("lint", "clang-tidy")]
+
+    def test_meson_without_tests_is_not_a_test_signal(self):
+        """A build file declares a build. The CMake signals already required
+        test evidence, and this one was inconsistent with them."""
+        assert detect.detect_config({"xplane_plugin/meson.build": "project('x', 'cpp')\n"}) == []
+
+    def test_meson_declaring_a_test_is(self):
+        src = "project('x', 'cpp')\ntest('suite', executable('t', 't.cpp'))\n"
+        got = detect.detect_config({"xplane_plugin/meson.build": src})
+        assert [(f.kind, f.tool) for f in got] == [("test.unit", "meson")]
+
+    def test_cmake_without_tests_is_not_a_test_signal(self):
+        """A CMakeLists that declares no tests declares no test capability."""
+        assert detect.detect_config({"CMakeLists.txt": "project(x)\nadd_executable(a a.c)\n"}) == []
+
+    def test_cmake_with_add_test_is(self):
+        got = detect.detect_config({"CMakeLists.txt": "enable_testing()\nadd_test(NAME t COMMAND t)\n"})
+        assert got and got[0].kind == "test.unit"
+
+    def test_clang_format_run_line(self):
+        wf = {".github/workflows/cpp-format.yml": "      - run: clang-format --dry-run -Werror\n"}
+        got = detect.detect_runs(wf)
+        assert [(f.kind, f.language, f.tool) for f in got] == [("format", "C/C++", "clang-format")]
+
+    def test_meson_test_counts_but_meson_compile_does_not(self):
+        """A build is not a test run, the lesson `assembleRelease` taught."""
+        build = detect.detect_runs({"w.yml": "      - run: meson setup build && meson compile -C build\n"})
+        assert "test.unit" not in {f.kind for f in build}
+        tested = detect.detect_runs({"w.yml": "      - run: meson test -C build\n"})
+        assert "test.unit" in {f.kind for f in tested}
+
+    def test_ctest_counts(self):
+        assert "test.unit" in {
+            f.kind for f in detect.detect_runs({"w.yml": "      - run: ctest --output-on-failure\n"})
+        }
+
+
+class TestSuperLinter:
+    """super-linter declares what it checks in an `env:` block, so no `run:`
+    line reveals it. In one repository here it is the only C++ format check
+    that exists."""
+
+    WF = """
+jobs:
+  lint:
+    steps:
+      - uses: super-linter/super-linter@v8.3.1
+        env:
+          VALIDATE_ALL_CODEBASE: true
+          VALIDATE_CLANG_FORMAT: true
+          VALIDATE_GITHUB_ACTIONS: true
+          VALIDATE_YAML: true
+"""
+
+    def test_enabled_validator_is_detected(self):
+        got = detect.detect_runs({".github/workflows/super-linter.yml": self.WF})
+        assert ("format", "C/C++", "clang-format") in {(f.kind, f.language, f.tool) for f in got}
+
+    def test_validators_not_enabled_are_not_credited(self):
+        """The action defaults most validators off. One repository enables
+        only clang-format, Actions and YAML, and crediting it with Python
+        linting would be exactly wrong."""
+        got = detect.detect_runs({".github/workflows/super-linter.yml": self.WF})
+        assert "Python" not in {f.language for f in got}
+
+    def test_a_commented_out_validator_is_not_credited(self):
+        wf = self.WF.replace("VALIDATE_CLANG_FORMAT: true", "# VALIDATE_CLANG_FORMAT: true")
+        assert detect.detect_runs({".github/workflows/super-linter.yml": wf}) == []
