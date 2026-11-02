@@ -372,9 +372,7 @@ class TestSummary:
         every practice is in place would be the worst possible instance of
         rendering our failure as somebody's success.
         """
-        results = [
-            ProbeResult(p.id, Outcome.UNREADABLE, attributes={"reason": "x"}) for p in PROBES[:6]
-        ]
+        results = [ProbeResult(p.id, Outcome.UNREADABLE, attributes={"reason": "x"}) for p in PROBES[:6]]
         out = render(_report(results))
         assert S.SUMMARY_NO_RECOMMENDATION in out
         assert S.SUMMARY_ALL_CLEAR not in out
