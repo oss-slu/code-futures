@@ -357,12 +357,40 @@ def _summary(report: RepositoryReport) -> str:
     parts.append("")
 
     sentences = _structure_sentences(report)
-    parts.append(S.SUMMARY_STRUCTURE.format(sentences=sentences) if sentences else S.SUMMARY_NO_STRUCTURE)
+    if sentences:
+        parts.append(S.SUMMARY_STRUCTURE.format(sentences=sentences))
+    else:
+        # An empty structural result means one of two things, and they are not
+        # interchangeable: the analysis ran and found nothing worth reporting,
+        # or it could not run. Claiming the first when it was the second
+        # renders our own failure as a clean bill of health.
+        structural = report.by_section(Section.STRUCTURE)
+        unreadable = [x for x in structural if x.outcome is Outcome.UNREADABLE]
+        if structural and len(unreadable) == len(structural):
+            reason = unreadable[0].attributes.get("reason", "").strip()
+            parts.append(
+                S.SUMMARY_STRUCTURE_UNREADABLE.format(reason=reason + (" " if reason else "")).replace(
+                    "  ", " "
+                )
+            )
+        else:
+            parts.append(S.SUMMARY_NO_STRUCTURE)
     parts.append("")
 
     lead = _lead_item(report)
     if lead is None:
-        parts.append(S.SUMMARY_NOTHING_TO_DO)
+        # No ranked recommendation is not the same as nothing to do. It also
+        # happens when every probe was unreadable, and when the only gap is a
+        # probe the remediation table does not rank.
+        gaps = [
+            x
+            for x in report.results
+            if x.outcome is Outcome.ABSENT or (x.outcome is Outcome.PRESENT and x.id in _CAPABILITY)
+        ]
+        if gaps or report.unreadable():
+            parts.append(S.SUMMARY_NO_RECOMMENDATION)
+        else:
+            parts.append(S.SUMMARY_ALL_CLEAR)
     else:
         label = lead["label"]
         parts.append(

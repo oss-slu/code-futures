@@ -78,11 +78,23 @@ SUMMARY_SCOPE_NO_COMMIT = "{probes} probes, {findings} findings{languages}."
 # that needs its own summary is not one.
 SUMMARY_STRUCTURE = "**Structure.** {sentences}"
 SUMMARY_FIRST_STEP = "**Suggested first step.** {item} — [the reasoning is below](#{where})."
-SUMMARY_NOTHING_TO_DO = "**Nothing here needs action.** Every practice this report checks is in place, which is rare and worth saying plainly."
+# Says only what is true: no finding reached the ranked-remediation list.
+# An earlier version claimed every practice was in place, which was a false
+# all-clear for a wholly unreadable report and for one whose only gap is a
+# probe nothing ranks.
+SUMMARY_NO_RECOMMENDATION = "**No ranked first step.** Nothing in this report reached the recommendation list. The sections below are still worth reading."
+
+# Reserved for the case that genuinely is an all-clear: nothing absent,
+# nothing configured-but-unrun, and nothing we failed to read.
+SUMMARY_ALL_CLEAR = "**Nothing here needs action.** Every practice this report checks is in place, and every probe returned an answer. That is rare and worth saying plainly."
 SUMMARY_UNREADABLE = (
     "**{count} probe{s} unreadable**: {probes}. That is our gap rather than this repository's."
 )
+# Two different things an empty structure section can mean, and conflating
+# them renders a collection failure as a clean result -- the exact mistake the
+# fourth outcome exists to prevent.
 SUMMARY_NO_STRUCTURE = "**Structure.** Nothing stood out against this repository's own distribution."
+SUMMARY_STRUCTURE_UNREADABLE = "**Structure.** We could not establish this. {reason} That is our gap rather than a finding about this repository."
 
 MULTI_LANGUAGE_COUNT = (
     "{findings} findings from {probes} probes, because `lint` and `format` are answered once per language."

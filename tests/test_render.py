@@ -361,15 +361,50 @@ class TestSummary:
         out = render(fixture.build())
         assert "our gap rather than this repository's" in out
 
-    def test_clean_report_says_nothing_needs_action(self):
+    def test_genuinely_clean_report_says_so(self):
         r = ProbeResult("practice.license", Outcome.PRESENT, attributes={"path": "LICENSE", "spdx": "MIT"})
-        assert S.SUMMARY_NOTHING_TO_DO in render(_report([r]))
+        assert S.SUMMARY_ALL_CLEAR in render(_report([r]))
+
+    def test_unreadable_report_is_not_given_an_all_clear(self):
+        """No ranked recommendation is not the same as nothing to do.
+
+        A wholly unreadable report produces no recommendation, and claiming
+        every practice is in place would be the worst possible instance of
+        rendering our failure as somebody's success.
+        """
+        results = [
+            ProbeResult(p.id, Outcome.UNREADABLE, attributes={"reason": "x"}) for p in PROBES[:6]
+        ]
+        out = render(_report(results))
+        assert S.SUMMARY_NO_RECOMMENDATION in out
+        assert S.SUMMARY_ALL_CLEAR not in out
+
+    def test_unranked_gap_is_not_an_all_clear(self):
+        """`format` has no entry in the remediation table, so a repository
+        whose only gap is formatting yields no lead item."""
+        r = ProbeResult("format", Outcome.ABSENT, language="Python")
+        out = render(_report([r]))
+        assert S.SUMMARY_NO_RECOMMENDATION in out
+        assert S.SUMMARY_ALL_CLEAR not in out
 
     def test_structure_clauses_are_omitted_not_invented(self):
         """A summary must not report an absence as a result."""
         r = ProbeResult("structure.hotspots", Outcome.ABSENT)
         out = render(_report([r]))
         assert S.SUMMARY_NO_STRUCTURE in out
+
+    def test_unreadable_history_is_not_reported_as_nothing_stood_out(self):
+        """The two reasons a structure section can be empty are not
+        interchangeable. Claiming the analysis found nothing when it could
+        not run renders a collection failure as a clean result."""
+        results = [
+            ProbeResult(p.id, Outcome.UNREADABLE, attributes={"reason": "History could not be read."})
+            for p in PROBES
+            if p.section is Section.STRUCTURE
+        ]
+        out = render(_report(results))
+        assert "could not establish this" in out
+        assert S.SUMMARY_NO_STRUCTURE not in out
 
 
 class TestNoLocalDefensiveness:
